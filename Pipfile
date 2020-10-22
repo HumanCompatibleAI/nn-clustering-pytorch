@@ -5,6 +5,9 @@ name = "pypi"
 
 [packages]
 yapf = "*"
+numpy = "*"
+torch = "*"
+torchvision = "*"
 
 [dev-packages]
 
