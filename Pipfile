@@ -8,8 +8,13 @@ yapf = "*"
 numpy = "*"
 torch = "*"
 torchvision = "*"
+flake8 = "*"
+sacred = "*"
 
 [dev-packages]
 
 [requires]
 python_version = "3.8"
+
+[packages.isort]
+extras = [ "pipfile-deprecated-finder",]
