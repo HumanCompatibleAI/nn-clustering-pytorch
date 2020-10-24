@@ -1,5 +1,7 @@
 import time
 
+import numpy as np
+
 
 def get_random_int_time():
     """
@@ -7,10 +9,10 @@ def get_random_int_time():
     """
     time_str = str(time.time())
     dcml_place = time_str.index('.')
-    return int(time_str[dcml_place+1:])
+    return int(time_str[dcml_place + 1:])
 
 
 def compute_percentile(x, arr):
     r = np.sum(arr < x)
     n = len(arr)
-    return r/n
+    return r / n

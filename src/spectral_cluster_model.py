@@ -1,14 +1,15 @@
 # Based on code written by Shlomi Hod, Stephen Casper, and Daniel Filan
 
-import pickle
 import copy
+import pickle
 
 import numpy as np
-from pathos.multiprocessing import ProcessPool
 import scipy.sparse as sparse
+from pathos.multiprocessing import ProcessPool
 from sklearn.cluster import SpectralClustering
 
-from src.utils import get_random_int_time, compute_percentile
+from src.utils import compute_percentile, get_random_int_time
+
 # I have no idea if that import actually works
 
 # config variables
@@ -154,10 +155,7 @@ def compute_n_cut(adj_mat, clustering_labels, epsilon):
     return sum(n_cut_terms.values())
 
 
-def adj_mat_to_cluster_quality(adj_mat,
-                               num_clusters,
-                               eigen_solver,
-                               epsilon):
+def adj_mat_to_cluster_quality(adj_mat, num_clusters, eigen_solver, epsilon):
     """
     Clusters a graph and computes the n-cut.
     adj_mat: sparse square adjacency matrix
@@ -223,7 +221,7 @@ def delete_isolated_ccs(weights_array, adj_mat):
 def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
                         epsilon, shuffle_method, seed_int):
     """
-    shuffles a weights array a number of times, then finds the n-cut of each 
+    shuffles a weights array a number of times, then finds the n-cut of each
     shuffle.
     num_samples: an int for the number of shuffles
     weights_array: an array of weight tensors (numpy arrays)
@@ -231,21 +229,21 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
     eigen_solver: a string or None specifying which eigenvector solver spectral
                   clustering should use
     epsilon: a small positive float for stopping us from dividing by zero
-    seed_int: an integer to set the numpy random seed to determine the 
+    seed_int: an integer to set the numpy random seed to determine the
               shufflings.
     returns an array of floats
     """
     assert shuffle_method in ["all", "nonzero"]
     assert epsilon > 0
-    shuffle_func = (shuffle_weight_tensor
-                    if shuffle_method == "all"
-                    else shuffle_weight_tensor_nonzero)
+    shuffle_func = (shuffle_weight_tensor if shuffle_method == "all" else
+                    shuffle_weight_tensor_nonzero)
     np.random.seed(seed_int)
     n_cuts = []
     for _ in range(num_samples):
         shuffled_weights_array_ = list(map(shuffle_func, weights_array))
         shuffled_adj_mat_ = weights_to_graph(shuffled_weights_array_)
-        my_tup = delete_isolated_ccs(shuffled_weights_array_, shuffled_adj_mat_)
+        my_tup = delete_isolated_ccs(shuffled_weights_array_,
+                                     shuffled_adj_mat_)
         shuffled_weights_array, shuffled_adj_mat = my_tup
         n_cut = adj_mat_to_cluster_quality(shuffled_adj_mat, num_clusters,
                                            eigen_solver, epsilon)
@@ -262,18 +260,18 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
         weights_array_ = pickle.load(f)
     adj_mat_ = weights_to_graph(weights_array_)
     weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
-    true_n_cut = adj_mat_to_cluster_quality(adj_mat, num_clusters, eigen_solver,
-                                            epsilon)
+    true_n_cut = adj_mat_to_cluster_quality(adj_mat, num_clusters,
+                                            eigen_solver, epsilon)
 
     samples_per_worker = num_samples // num_workers
     shuffle_cluster_arg_det = (samples_per_worker, weights_array, num_clusters,
                                eigen_solver, epsilon, shuffle_method)
     time_int = get_random_int_time()
     if num_workers == 1:
-        args = shuffle_cluster_arg_det + (time_int,)
+        args = shuffle_cluster_arg_det + (time_int, )
         shuffled_n_cuts = shuffle_and_cluster(*args)
     else:
-        worker_det_args = [[copy.deepcopy(arg) for _ in range(n_workers)]
+        worker_det_args = [[copy.deepcopy(arg) for _ in range(num_workers)]
                            for arg in shuffle_cluster_arg_det]
         seed_args = [time_int + i for i in range(num_workers)]
         worker_args = worker_det_args + [seed_args]
@@ -286,10 +284,12 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
     shuff_stdev = np.std(shuffled_n_cuts)
     n_cut_percentile = compute_percentile(true_n_cut, shuffled_n_cuts)
     z_score = (true_n_cut - shuff_mean) / (shuff_stdev + epsilon)
-    result = {'true n-cut': true_n_cut,
-              'num samples': num_samples,
-              'mean': shuff_mean,
-              'stdev': shuff_stdev,
-              'percentile': n_cut_percentile,
-              'z-score': z_score}
+    result = {
+        'true n-cut': true_n_cut,
+        'num samples': num_samples,
+        'mean': shuff_mean,
+        'stdev': shuff_stdev,
+        'percentile': n_cut_percentile,
+        'z-score': z_score
+    }
     return result
