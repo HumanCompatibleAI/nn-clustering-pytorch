@@ -1,6 +1,6 @@
-x = {'a': 37, 'b': 42, 'c': 927}
-
 import numpy as np
+
+x = {'a': 37, 'b': 42, 'c': 927}
 
 p = np.array([2, 3, 4])
 
