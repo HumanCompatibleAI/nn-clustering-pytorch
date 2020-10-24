@@ -1,10 +1,15 @@
 # Based on code written by Shlomi Hod, Stephen Casper, and Daniel Filan
 
-# import pickle
+import pickle
+import copy
 
 import numpy as np
+from pathos.multiprocessing import ProcessPool
 import scipy.sparse as sparse
 from sklearn.cluster import SpectralClustering
+
+from src.utils import get_random_int_time, compute_percentile
+# I have no idea if that import actually works
 
 # config variables
 num_clusters = 4
@@ -21,6 +26,7 @@ def weights_to_layer_widths(weights_array):
     weights_array: an array of numpy arrays representing NN layer tensors
     Returns a list of ints, each representing the width of a layer.
     """
+    # TODO: add assert that shapes work the way I think they do
     layer_widths = [x.shape[1] for x in weights_array]
     layer_widths.append(weights_array[-1].shape[0])
     return layer_widths
@@ -123,7 +129,7 @@ def cluster_adj_mat(n_clusters, adj_mat, eigen_solver):
     return clustering.labels_
 
 
-def compute_n_cut(adj_mat, clustering_labels, epsilon, verbose=False):
+def compute_n_cut(adj_mat, clustering_labels, epsilon):
     """
     Compute the n-cut of a given clustering.
     n-cut is as defined in "A Tutorial on Spectral Clustering", von Luxburg,
@@ -145,16 +151,13 @@ def compute_n_cut(adj_mat, clustering_labels, epsilon, verbose=False):
         # NB above line is slow when adj_mat is in CSR or CSC format
         vol = adj_mat[in_mask, :].sum()
         n_cut_terms[label] = 0.5 * cut / (vol + epsilon)
-        if verbose:
-            print('n-cut term (label, cut, vol)', label, cut, vol)
     return sum(n_cut_terms.values())
 
 
 def adj_mat_to_cluster_quality(adj_mat,
                                num_clusters,
                                eigen_solver,
-                               epsilon,
-                               verbose=False):
+                               epsilon):
     """
     Clusters a graph and computes the n-cut.
     adj_mat: sparse square adjacency matrix
@@ -167,7 +170,7 @@ def adj_mat_to_cluster_quality(adj_mat,
     returns a float that is the n-cut value.
     """
     clustering_labels = cluster_adj_mat(num_clusters, adj_mat, eigen_solver)
-    n_cut_val = compute_n_cut(adj_mat, clustering_labels, epsilon, verbose)
+    n_cut_val = compute_n_cut(adj_mat, clustering_labels, epsilon)
     return n_cut_val
 
 
@@ -218,15 +221,75 @@ def delete_isolated_ccs(weights_array, adj_mat):
 
 
 def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
-                        assign_labels, epsilon, shuffle_method):
+                        epsilon, shuffle_method, seed_int):
     """
-    TODO: write documentation
+    shuffles a weights array a number of times, then finds the n-cut of each 
+    shuffle.
+    num_samples: an int for the number of shuffles
+    weights_array: an array of weight tensors (numpy arrays)
+    num_clusters: an int for the number of clusters to cluster into
+    eigen_solver: a string or None specifying which eigenvector solver spectral
+                  clustering should use
+    epsilon: a small positive float for stopping us from dividing by zero
+    seed_int: an integer to set the numpy random seed to determine the 
+              shufflings.
+    returns an array of floats
     """
     assert shuffle_method in ["all", "nonzero"]
-    # what this should do:
-    # shuffle the network num_samples times, get the n-cuts, and collate into
-    # a list or set or something.
-    # then build a second function to (a) load weights from a file-name,
-    # (b) cluster those weights (after deleting isolated CCs), then (c) run this
-    # in parallel a bunch of times.
-    pass
+    assert epsilon > 0
+    shuffle_func = (shuffle_weight_tensor
+                    if shuffle_method == "all"
+                    else shuffle_weight_tensor_nonzero)
+    np.random.seed(seed_int)
+    n_cuts = []
+    for _ in range(num_samples):
+        shuffled_weights_array_ = list(map(shuffle_func, weights_array))
+        shuffled_adj_mat_ = weights_to_graph(shuffled_weights_array_)
+        my_tup = delete_isolated_ccs(shuffled_weights_array_, shuffled_adj_mat_)
+        shuffled_weights_array, shuffled_adj_mat = my_tup
+        n_cut = adj_mat_to_cluster_quality(shuffled_adj_mat, num_clusters,
+                                           eigen_solver, epsilon)
+        n_cuts.append(n_cut)
+    return n_cuts
+
+
+def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
+                   num_samples, num_workers, shuffle_method):
+    """
+    TODO document
+    """
+    with open(weights_path, 'rb') as f:
+        weights_array_ = pickle.load(f)
+    adj_mat_ = weights_to_graph(weights_array_)
+    weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
+    true_n_cut = adj_mat_to_cluster_quality(adj_mat, num_clusters, eigen_solver,
+                                            epsilon)
+
+    samples_per_worker = num_samples // num_workers
+    shuffle_cluster_arg_det = (samples_per_worker, weights_array, num_clusters,
+                               eigen_solver, epsilon, shuffle_method)
+    time_int = get_random_int_time()
+    if num_workers == 1:
+        args = shuffle_cluster_arg_det + (time_int,)
+        shuffled_n_cuts = shuffle_and_cluster(*args)
+    else:
+        worker_det_args = [[copy.deepcopy(arg) for _ in range(n_workers)]
+                           for arg in shuffle_cluster_arg_det]
+        seed_args = [time_int + i for i in range(num_workers)]
+        worker_args = worker_det_args + [seed_args]
+        with ProcessPool(nodes=num_workers) as p:
+            parallel_shuffled_n_cuts = p.map(shuffle_and_cluster, *worker_args)
+        shuffled_n_cuts = np.concatenate(parallel_shuffled_n_cuts)
+
+    num_samples = len(shuffled_n_cuts)
+    shuff_mean = np.mean(shuffled_n_cuts)
+    shuff_stdev = np.std(shuffled_n_cuts)
+    n_cut_percentile = compute_percentile(true_n_cut, shuffled_n_cuts)
+    z_score = (true_n_cut - shuff_mean) / (shuff_stdev + epsilon)
+    result = {'true n-cut': true_n_cut,
+              'num samples': num_samples,
+              'mean': shuff_mean,
+              'stdev': shuff_stdev,
+              'percentile': n_cut_percentile,
+              'z-score': z_score}
+    return result
