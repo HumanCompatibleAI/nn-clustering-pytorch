@@ -1,21 +1,23 @@
 # Based on code written by Shlomi Hod, Stephen Casper, and Daniel Filan
 
 import copy
-import pickle
 
 import numpy as np
 import scipy.sparse as sparse
 from pathos.multiprocessing import ProcessPool
 from sklearn.cluster import SpectralClustering
+import torch
 
-from src.utils import compute_percentile, get_random_int_time
-
-# I have no idea if that import actually works
+from utils import compute_percentile, get_random_int_time, load_model_weights_pytorch
+from train_model import MyMLP
 
 # config variables
 num_clusters = 4
-weights_path = "does/not/exist.pckl"
+weights_path = "test_net.pth"
 shuffle_method = "all"
+net_class = MyMLP
+
+
 
 # main code
 
@@ -84,7 +86,7 @@ def weights_to_graph(weights_array):
     # add an initial row of Nones
     n = weights_array[0].shape[1]
     init_zeros = sparse.coo_matrix((n, n))
-    nones_row = init_zeros + [None] * len(weights_array)
+    nones_row = [init_zeros] + [None] * len(weights_array)
     block_mat.append(nones_row)
 
     # For everything in the weights array, add a row to block_mat of the form
@@ -251,13 +253,33 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
     return n_cuts
 
 
-def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
+def run_experiment(weights_path, net_class, num_clusters, eigen_solver, epsilon,
                    num_samples, num_workers, shuffle_method):
     """
-    TODO document
+    load saved weights, cluster them, get their n-cut, then shuffle them and
+    get the n-cut of the shuffles. Before each clustering, delete any isolated
+    connected components.
+    weights_path: path to where weights are saved. String suffices.
+    net_class: pytorch class of saved network. probably has to inherit from
+               torch.nn.Module
+    num_clusters: int, number of groups to cluster the net into
+    eigen_solver: string specifying which eigenvalue solver to use for spectral
+                  clustering
+    epsilon: small positive number to stop us dividing by zero
+    num_samples: how many shuffles to compare against
+    num_workers: how many CPUs to compute shuffle n-cuts on
+    shuffle_method: string indicating how to shuffle the network
+    returns: dict containing 'true n-cut', a float, 'num samples', an int,
+             'mean', a float representing the mean shuffled n-cut,
+             'stdev', a float representing the standard deviation of the 
+             distribution of shuffled n-cuts,
+             'percentile', a float representing the empirical percentile of the
+             true n-cut among the shuffled n-cuts,
+             and 'z-score', a float representing the z-score of the true n-cut
+             in the distribution of the shuffled n-cuts.
     """
-    with open(weights_path, 'rb') as f:
-        weights_array_ = pickle.load(f)
+    device = (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    weights_array_ = load_model_weights_pytorch(weights_path, net_class, device)
     adj_mat_ = weights_to_graph(weights_array_)
     weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
     true_n_cut = adj_mat_to_cluster_quality(adj_mat, num_clusters,
@@ -283,6 +305,7 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
     shuff_mean = np.mean(shuffled_n_cuts)
     shuff_stdev = np.std(shuffled_n_cuts)
     n_cut_percentile = compute_percentile(true_n_cut, shuffled_n_cuts)
+    assert epsilon > 0
     z_score = (true_n_cut - shuff_mean) / (shuff_stdev + epsilon)
     result = {
         'true n-cut': true_n_cut,
