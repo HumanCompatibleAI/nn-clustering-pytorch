@@ -1,5 +1,5 @@
-import time
 import copy
+import time
 
 import numpy as np
 import torch
@@ -35,6 +35,8 @@ def load_model_weights_pytorch(model_path, model_class, pytorch_device):
     assert len(param_list) % 2 == 0
     # param_shapes = [tensor.size() for tensor in param_list]
     # print(param_shapes)
-    weight_params = [copy.deepcopy(param_list[2*j].detach().numpy()) for j in range(len(param_list) // 2)]
+    weight_params = [
+        copy.deepcopy(param_list[2 * j].detach().numpy())
+        for j in range(len(param_list) // 2)
+    ]
     return weight_params
-    

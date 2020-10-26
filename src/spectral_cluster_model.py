@@ -4,20 +4,19 @@ import copy
 
 import numpy as np
 import scipy.sparse as sparse
+import torch
 from pathos.multiprocessing import ProcessPool
 from sklearn.cluster import SpectralClustering
-import torch
 
-from utils import compute_percentile, get_random_int_time, load_model_weights_pytorch
 from train_model import MyMLP
+from utils import (compute_percentile, get_random_int_time,
+                   load_model_weights_pytorch,)
 
 # config variables
 num_clusters = 4
 weights_path = "test_net.pth"
 shuffle_method = "all"
 net_class = MyMLP
-
-
 
 # main code
 
@@ -253,8 +252,8 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
     return n_cuts
 
 
-def run_experiment(weights_path, net_class, num_clusters, eigen_solver, epsilon,
-                   num_samples, num_workers, shuffle_method):
+def run_experiment(weights_path, net_class, num_clusters, eigen_solver,
+                   epsilon, num_samples, num_workers, shuffle_method):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
@@ -271,15 +270,17 @@ def run_experiment(weights_path, net_class, num_clusters, eigen_solver, epsilon,
     shuffle_method: string indicating how to shuffle the network
     returns: dict containing 'true n-cut', a float, 'num samples', an int,
              'mean', a float representing the mean shuffled n-cut,
-             'stdev', a float representing the standard deviation of the 
+             'stdev', a float representing the standard deviation of the
              distribution of shuffled n-cuts,
              'percentile', a float representing the empirical percentile of the
              true n-cut among the shuffled n-cuts,
              and 'z-score', a float representing the z-score of the true n-cut
              in the distribution of the shuffled n-cuts.
     """
-    device = (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
-    weights_array_ = load_model_weights_pytorch(weights_path, net_class, device)
+    device = (torch.device("cuda")
+              if torch.cuda.is_available() else torch.device("cpu"))
+    weights_array_ = load_model_weights_pytorch(weights_path, net_class,
+                                                device)
     adj_mat_ = weights_to_graph(weights_array_)
     weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
     true_n_cut = adj_mat_to_cluster_quality(adj_mat, num_clusters,
