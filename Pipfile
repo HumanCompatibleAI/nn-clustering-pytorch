@@ -11,6 +11,8 @@ torchvision = "*"
 flake8 = "*"
 sacred = "*"
 scipy = "*"
+sklearn = "*"
+pathos = "*"
 
 [dev-packages]
 
