@@ -16,7 +16,6 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_classes = 10
     num_epochs = 20
     log_interval = 100
     dataset = 'kmnist'
@@ -25,7 +24,6 @@ def basic_config():
     del _
 
 
-# train and test sets
 @train_exp.capture
 def load_datasets(dataset, batch_size):
     """
@@ -68,7 +66,7 @@ class MyMLP(nn.Module):
     """
     A simple MLP, likely not very competitive
     """
-    def __init__(self, num_classes):
+    def __init__(self):
         super(MyMLP, self).__init__()
         self.hidden1 = 512
         self.hidden2 = 512
@@ -76,7 +74,7 @@ class MyMLP(nn.Module):
         self.fc1 = nn.Linear(28 * 28, self.hidden1)
         self.fc2 = nn.Linear(self.hidden1, self.hidden2)
         self.fc3 = nn.Linear(self.hidden2, self.hidden3)
-        self.fc4 = nn.Linear(self.hidden3, num_classes)
+        self.fc4 = nn.Linear(self.hidden3, 10)
 
     def forward(self, x):
         x = x.view(-1, 28 * 28)
@@ -90,7 +88,17 @@ class MyMLP(nn.Module):
 def train_net(network, train_loader, test_loader, num_epochs, optimizer,
               criterion, log_interval, device, _run):
     """
-    TODO write docstring
+    Train a neural network, printing out log information.
+    network: an instantiated object that inherits from nn.Module or something.
+    train_loader: pytorch loader for the training dataset
+    test_loader: pytorch loader for the testing dataset
+    num_epochs: int for the number of epochs 
+    optimizer: pytorch optimizer. Might be SGD or Adam.
+    criterion: loss function.
+    log_interval: int. how many training steps between logging infodumps.
+    device: pytorch device - do things go on CPU or GPU?
+    returns: tuple of test acc, test loss, and list of tuples of 
+             (epoch number, iteration number, train loss)
     """
     network.to(device)
     loss_list = []
@@ -121,7 +129,12 @@ def train_net(network, train_loader, test_loader, num_epochs, optimizer,
 
 def eval_net(network, test_loader, device, criterion, _run):
     """
-    TODO write docstring
+    gets test loss and accuracy
+    network: network to get loss of
+    test_loader: pytorch loader of test set
+    device: device to put data on
+    criterion: loss function
+    returns: tuple of floats. first is test accuracy, second is test loss.
     """
     correct = 0.0
     total = 0
@@ -148,16 +161,21 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 
 @train_exp.automain
-def train_network(dataset, num_classes, num_epochs, batch_size, log_interval,
-                  model_path, _run):
+def train_and_save_network(dataset, num_epochs, batch_size, log_interval,
+                           model_path, _run):
     """
-    TODO docstring
+    Trains and saves network.
+    dataset: string specifying which dataset we're using
+    num_epochs: int
+    batch_size: int
+    log_interval: int. number of iterations to go between logging infodumps
+    model_path: string. where to save the model.
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
 
     criterion = nn.CrossEntropyLoss()
-    my_net = MyMLP(num_classes)
+    my_net = MyMLP()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
     test_acc, test_loss, loss_list = train_net(my_net, train_loader,

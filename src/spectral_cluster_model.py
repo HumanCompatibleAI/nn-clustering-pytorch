@@ -12,8 +12,11 @@ from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
 from train_model import MyMLP
-from utils import (compute_percentile, get_random_int_time,
-                   load_model_weights_pytorch,)
+from utils import (
+    compute_percentile,
+    get_random_int_time,
+    load_model_weights_pytorch,
+)
 
 clust_exp = Experiment('cluster_model')
 clust_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -23,7 +26,7 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 @clust_exp.config
 def basic_config():
     num_clusters = 4
-    weights_path = "test_net.pth"
+    weights_path = "kmnist_mlp.pth"
     shuffle_method = "all"
     net_class = MyMLP
     epsilon = 1e-9
