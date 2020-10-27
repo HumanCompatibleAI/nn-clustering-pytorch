@@ -6,19 +6,32 @@ import numpy as np
 import scipy.sparse as sparse
 import torch
 from pathos.multiprocessing import ProcessPool
+from sacred import Experiment
+from sacred.observers import FileStorageObserver
+from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
 from train_model import MyMLP
 from utils import (compute_percentile, get_random_int_time,
                    load_model_weights_pytorch,)
 
-# config variables
-num_clusters = 4
-weights_path = "test_net.pth"
-shuffle_method = "all"
-net_class = MyMLP
+clust_exp = Experiment('cluster_model')
+clust_exp.captured_out_filter = apply_backspaces_and_linefeeds
+clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 
-# main code
+
+@clust_exp.config
+def basic_config():
+    num_clusters = 4
+    weights_path = "test_net.pth"
+    shuffle_method = "all"
+    net_class = MyMLP
+    epsilon = 1e-9
+    num_samples = 100
+    num_workers = 1
+    eigen_solver = 'arpack'
+    _ = locals()
+    del _
 
 
 def weights_to_layer_widths(weights_array):
@@ -252,6 +265,7 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
     return n_cuts
 
 
+@clust_exp.automain
 def run_experiment(weights_path, net_class, num_clusters, eigen_solver,
                    epsilon, num_samples, num_workers, shuffle_method):
     """

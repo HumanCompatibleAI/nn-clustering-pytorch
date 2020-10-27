@@ -26,7 +26,7 @@ def load_model_weights_pytorch(model_path, model_class, pytorch_device):
     model_path: a string
     model_class: a pytorch class that probably has to inherit from
                  torch.nn.Module
-    pytorch_device: string, which device to save the model to
+    pytorch_device: pytorch device, which device to save the model to
     returns: array of numpy arrays of weight tensors (no biases)
     """
     model = model_class()
