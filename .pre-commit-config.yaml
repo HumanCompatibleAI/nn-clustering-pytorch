@@ -7,7 +7,7 @@ repos:
     rev: 5.6.4
     hooks:
     -   id: isort
-        args: ["--trailing-comma"]
+        args: ["--trailing-comma", "--multi-line", "3"]
 -   repo: https://gitlab.com/pycqa/flake8
     rev: 3.8.4
     hooks:

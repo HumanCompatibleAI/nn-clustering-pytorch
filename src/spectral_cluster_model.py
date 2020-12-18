@@ -203,12 +203,29 @@ def delete_isolated_ccs(weights_array, adj_mat):
     return new_weights_array, new_adj_mat
 
 
+def weights_array_to_clustering_and_quality(weights_array, num_clusters,
+                                            eigen_solver, epsilon):
+    """
+    Take an array of weight tensors, delete any isolated connected components,
+    cluster the resulting graph, and get the n-cut and the clustering.
+    weights_array: array of numpy weight tensors
+    num_clusters: integer number of desired clusters
+    eigen_solver: string specifying which eigenvalue solver to use for spectral
+                  clustering
+    epsilon: small positive number to stop us dividing by zero
+    returns: tuple containing n-cut and array of cluster labels
+    """
+    adj_mat = weights_to_graph(weights_array)
+    weights_array_, adj_mat_ = delete_isolated_ccs(weights_array, adj_mat)
+    return adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
+                                             eigen_solver, epsilon)
+
+
 @clust_exp.automain
 def run_experiment(weights_path, num_clusters, eigen_solver, epsilon):
     """
-    load saved weights, cluster them, get their n-cut, then shuffle them and
-    get the n-cut of the shuffles. Before each clustering, delete any isolated
-    connected components.
+    load saved weights, delete any isolated connected components, cluster them,
+    get their n-cut and the clustering
     weights_path: path to where weights are saved. String suffices.
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
@@ -219,7 +236,6 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon):
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     weights_array_ = load_model_weights_pytorch(weights_path, device)
-    adj_mat_ = weights_to_graph(weights_array_)
-    weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
-    return adj_mat_to_clustering_and_quality(adj_mat, num_clusters,
-                                             eigen_solver, epsilon)
+    return weights_array_to_clustering_and_quality(weights_array_,
+                                                   num_clusters, eigen_solver,
+                                                   epsilon)
