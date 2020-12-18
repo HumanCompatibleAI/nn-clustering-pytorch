@@ -1,4 +1,4 @@
-import copy
+import collections
 import time
 
 import numpy as np
@@ -20,23 +20,19 @@ def compute_percentile(x, arr):
     return r / n
 
 
-def load_model_weights_pytorch(model_path, model_class, pytorch_device):
+def load_model_weights_pytorch(model_path, pytorch_device):
     """
-    Take a pytorch saved model, and return an array of the weight tensors
-    model_path: a string
-    model_class: a pytorch class that probably has to inherit from
-                 torch.nn.Module
+    Take a pytorch saved model state dict, and return an array of the weight
+    tensors
+    NB: this relies on the dict being ordered in the right order.
+    model_path: a string, pointing to a pytorch saved state_dict
     pytorch_device: pytorch device, which device to save the model to
     returns: array of numpy arrays of weight tensors (no biases)
     """
-    model = model_class()
-    model.load_state_dict(torch.load(model_path, map_location=pytorch_device))
-    param_list = list(model.parameters())
-    assert len(param_list) % 2 == 0
-    # param_shapes = [tensor.size() for tensor in param_list]
-    # print(param_shapes)
-    weight_params = [
-        copy.deepcopy(param_list[2 * j].detach().numpy())
-        for j in range(len(param_list) // 2)
-    ]
-    return weight_params
+    state_dict = torch.load(model_path, map_location=pytorch_device)
+    assert isinstance(state_dict, collections.OrderedDict)
+    weights = []
+    for string in state_dict:
+        if string.endswith("weight"):
+            weights.append(state_dict[string].detach().cpu().numpy())
+    return weights
