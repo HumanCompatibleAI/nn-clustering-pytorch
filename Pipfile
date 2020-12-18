@@ -4,20 +4,16 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-yapf = "*"
 numpy = "*"
 torch = "*"
 torchvision = "*"
-flake8 = "*"
 sacred = "*"
 scipy = "*"
 sklearn = "*"
 pathos = "*"
+pre-commit = "*"
 
 [dev-packages]
 
 [requires]
 python_version = "3.8"
-
-[packages.isort]
-extras = [ "pipfile-deprecated-finder",]
