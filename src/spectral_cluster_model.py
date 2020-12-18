@@ -20,7 +20,7 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 @clust_exp.config
 def basic_config():
     num_clusters = 4
-    weights_path = "kmnist_mlp.pth"
+    weights_path = "./models/kmnist.pth"
     epsilon = 1e-9
     eigen_solver = 'arpack'
     _ = locals()
