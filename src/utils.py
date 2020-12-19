@@ -36,3 +36,20 @@ def load_model_weights_pytorch(model_path, pytorch_device):
         if string.endswith("weight"):
             weights.append(state_dict[string].detach().cpu().numpy())
     return weights
+
+
+def invert_layer_masks_np(mat, mask_rows, mask_cols):
+    """
+    Takes a numpy array mat, and two lists of booleans.
+    Returns a numpy array which, if masked by the lists, would produce
+    the input. The entries that would be masked are input as 0.0.
+    """
+    assert mat.shape[0] == len(list(filter(None, mask_rows)))
+    assert mat.shape[1] == len(list(filter(None, mask_cols)))
+    for (row, mask_bool) in enumerate(mask_rows):
+        if not mask_bool:
+            mat = np.insert(mat, row, 0.0, axis=0)
+    for (col, mask_bool) in enumerate(mask_cols):
+        if not mask_bool:
+            mat = np.insert(mat, col, 0.0, axis=1)
+    return mat
