@@ -12,13 +12,13 @@ from sacred.utils import apply_backspaces_and_linefeeds
 from spectral_cluster_model import (
     adj_mat_to_clustering_and_quality,
     weights_array_to_clustering_and_quality,
-    weights_to_graph,
 )
 from utils import (
     compute_percentile,
     delete_isolated_ccs,
     get_random_int_time,
     load_model_weights_pytorch,
+    weights_to_graph,
 )
 
 shuffle_and_clust = Experiment('shuffle_and_clust')
