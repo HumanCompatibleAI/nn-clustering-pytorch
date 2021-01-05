@@ -11,12 +11,12 @@ from sacred.utils import apply_backspaces_and_linefeeds
 
 from spectral_cluster_model import (
     adj_mat_to_clustering_and_quality,
-    delete_isolated_ccs,
     weights_array_to_clustering_and_quality,
     weights_to_graph,
 )
 from utils import (
     compute_percentile,
+    delete_isolated_ccs,
     get_random_int_time,
     load_model_weights_pytorch,
 )
@@ -123,7 +123,8 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
               if torch.cuda.is_available() else torch.device("cpu"))
     weights_array_ = load_model_weights_pytorch(weights_path, device)
     adj_mat_ = weights_to_graph(weights_array_)
-    weights_array, adj_mat = delete_isolated_ccs(weights_array_, adj_mat_)
+    weights_array, adj_mat, _, _ = delete_isolated_ccs(weights_array_,
+                                                       adj_mat_)
     true_n_cut, _ = adj_mat_to_clustering_and_quality(adj_mat, num_clusters,
                                                       eigen_solver, epsilon)
 
