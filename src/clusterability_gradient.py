@@ -35,13 +35,6 @@ def adj_to_laplacian_and_degs(adj_mat_csr):
     return scipy.sparse.identity(num_rows, format='csr') - result, degree_vec
 
 
-# NB: we're going to need delete_isolated_ccs to return the layer masks it
-# applies because otherwise you can't fatten up the gradient.
-
-# we're also going to be making a pytorch function here that is hopefully
-# computable in numpy
-
-
 def get_neuron_contribs_dy_dW(layer, mat_list, degree_list, widths, pre_sums,
                               dy_dL):
     """
@@ -170,11 +163,6 @@ def get_dy_dW_np(degree_list, mat_list, dy_dL, num_workers=1):
     return grad_list
 
 
-def retrieve(x):
-    # placeholder function
-    pass
-
-
 class MyEigenvalues(Function):
     """
     A torch autograd Function that takes the eigenvalues of the normalized
@@ -182,34 +170,47 @@ class MyEigenvalues(Function):
     """
     @staticmethod
     def forward(ctx, num_workers, num_eigs, *args):
-        # can only use save_for_backward once!!!!! also only saves tensors!!!!
-        ctx.save_for_backward(num_workers, num_eigs)
-        w_tens_array = [tens.detach().cpu().numpy() for tens in args]
-        ctx.save_for_backward(w_tens_array)
-        adj_mat_csr = weights_to_graph(w_tens_array)
-        my_tup = delete_isolated_ccs(w_tens_array, adj_mat_csr)
+        assert isinstance(num_workers, int)
+        assert isinstance(num_eigs, int)
+        w_tens_np_array = [tens.detach().cpu().numpy() for tens in args]
+        adj_mat_csr = weights_to_graph(w_tens_np_array)
+        my_tup = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
         thin_w_array, thin_adj_mat, del_rows, del_cols = my_tup
-        ctx.save_for_backward(del_rows, del_cols)
+        thin_w_tens_array = [torch.from_numpy(tens) for tens in thin_w_array]
         lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
-        ctx.save_for_backward(degree_vec)
         evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, sigma=-1.0, which='LM')
         evecs = np.transpose(evecs)
         # ^ makes evecs (num eigenvals) * (size of lap mat)
         outers = []
         for i in range(num_eigs):
-            outers.append(np.outer(evecs[i + 1], evecs[i + 1]))
-        ctx.save_for_backward(outers)
+            outers.append(
+                torch.from_numpy(np.outer(evecs[i + 1], evecs[i + 1])))
+        ctx.save_for_backward(torch.tensor(num_workers),
+                              torch.tensor(num_eigs),
+                              torch.from_numpy(del_rows),
+                              torch.from_numpy(del_cols),
+                              torch.from_numpy(degree_vec), *outers,
+                              *thin_w_tens_array)
         return torch.from_numpy(evals)
 
     @staticmethod
     def backward(ctx, dy):
-        # problem: how do I return a variable number of outputs?
-        # also somehow I have to retrieve the stuff in context.
-        my_tup = retrieve(ctx)
-        outers, degree_vec, w_tens_array = my_tup
-        num_workers, del_rows, del_cols = my_tup
+        (num_workers_tens, num_eigs_tens, del_rows_tens, del_cols_tens,
+         degree_vec_tens, *thin_w_array_and_outers) = ctx.saved_tensors
+        num_workers = num_workers_tens.item()
+        num_eigs = num_eigs_tens.item()
+        del_rows = del_rows_tens.detach().cpu().numpy()
+        del_cols = del_cols_tens.detach().cpu().numpy()
+        degree_vec = degree_vec_tens.detach().cpu().numpy()
+        outers_tens = thin_w_array_and_outers[:num_eigs]
+        thin_w_tens_array = thin_w_array_and_outers[num_eigs:]
+        outers = [outer.detach().cpu().numpy() for outer in outers_tens]
+        thin_w_np_array = [
+            tens.detach().cpu().numpy() for tens in thin_w_tens_array
+        ]
+
         dy_dL = np.tensordot(dy, outers, [[0], [0]])
-        penult_grad = get_dy_dW_np(degree_vec, w_tens_array, dy_dL,
+        penult_grad = get_dy_dW_np(degree_vec, thin_w_np_array, dy_dL,
                                    num_workers)
         assert len(del_rows) == len(del_cols)
         penult_len = "penult_grad different length than expected"
@@ -218,5 +219,5 @@ class MyEigenvalues(Function):
         for (i, grad) in enumerate(penult_grad):
             fat_grad = invert_deleted_neurons_np(grad, del_rows[i],
                                                  del_cols[i])
-            final_grad.append(fat_grad)
-        pass
+            final_grad.append(torch.from_numpy(fat_grad))
+        return tuple(final_grad)
