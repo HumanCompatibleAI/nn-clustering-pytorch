@@ -167,6 +167,8 @@ class MyEigenvalues(Function):
     """
     A torch autograd Function that takes the eigenvalues of the normalized
     Laplacian of a neural network
+    Sam Toyer helped me figure out how to pack in and out the lists of tensors
+    into ctx (altho he is obviously not responsible for any bugs in this code)
     """
     @staticmethod
     def forward(ctx, num_workers, num_eigs, *args):
