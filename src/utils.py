@@ -65,10 +65,12 @@ def delete_isolated_ccs(weights_array, adj_mat):
     is an updated adj_mat, third element is array of arrays of deleted rows,
     fourth element is array of arrays of deleted cols
     """
+    # TODO: check that rows to delete and cols to delete match
     nc, labels = sparse.csgraph.connected_components(adj_mat, directed=False)
     # if there's only one connected component, don't bother
+    empty_del_array = [[] for _ in weights_array]
     if nc == 1:
-        return weights_array, adj_mat, [], []
+        return weights_array, adj_mat, empty_del_array, empty_del_array
     widths = weights_to_layer_widths(weights_array)
     cum_sums = np.cumsum(widths)
     cum_sums = np.insert(cum_sums, 0, 0)
@@ -78,7 +80,7 @@ def delete_isolated_ccs(weights_array, adj_mat):
         initial_ccs.intersection(final_ccs))
     # if there aren't isolated ccs, don't bother deleting any
     if not isolated_ccs:
-        return weights_array, adj_mat, [], []
+        return weights_array, adj_mat, empty_del_array, empty_del_array
     # go through weights_array, construct new one without rows and cols in
     # isolated clusters
     new_weights_array = []
@@ -117,8 +119,10 @@ def invert_deleted_neurons_np(tens, rows_deleted, cols_deleted):
     cols_deleted, for a 2d array), then you'd get the input back. The entries
     that would be deleted are input as 0.0.
     """
-    assert tens.shape[0] > rows_deleted[-1]
-    assert tens.shape[1] > cols_deleted[-1]
+    if len(rows_deleted) > 0:
+        assert tens.shape[0] > rows_deleted[-1]
+    if len(cols_deleted) > 0:
+        assert tens.shape[1] > cols_deleted[-1]
     for row in rows_deleted:
         tens = np.insert(tens, row, 0.0, axis=0)
     for col in cols_deleted:

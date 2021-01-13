@@ -193,7 +193,7 @@ class LaplacianEigenvalues(Function):
                               torch.tensor(del_cols),
                               torch.from_numpy(degree_vec), *outers,
                               *thin_w_tens_array)
-        return torch.from_numpy(evals)
+        return torch.from_numpy(evals[1:])
 
     @staticmethod
     def backward(ctx, dy):
@@ -222,4 +222,4 @@ class LaplacianEigenvalues(Function):
             fat_grad = invert_deleted_neurons_np(grad, del_rows[i],
                                                  del_cols[i])
             final_grad.append(torch.from_numpy(fat_grad))
-        return tuple(final_grad)
+        return tuple([None, None] + final_grad)
