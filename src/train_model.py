@@ -19,6 +19,8 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 # probably should define a global variable for the list of datasets.
 # maybe in a utils file or something.
 
+# TODO: write code to only apply clust grad once every n epochs
+
 
 @train_exp.config
 def basic_config():
