@@ -83,29 +83,37 @@ def delete_isolated_ccs(weights_array, adj_mat):
         return weights_array, adj_mat, empty_del_array, empty_del_array
     # go through weights_array, construct new one without rows and cols in
     # isolated clusters
-    new_weights_array = []
     all_deleted_rows = []
     all_deleted_cols = []
     for t, tensor in enumerate(weights_array):
         # remember: in pytorch, rows are out_{channels, neurons}, columns are
         # in_{channels, neurons}
-        rows_to_delete = []
+        if t == 0:
+            inputs_to_delete = []
+            for j in range(tensor.shape[1]):
+                node = cum_sums[t] + j
+                if labels[node] in isolated_ccs:
+                    inputs_to_delete.append(j)
+            all_deleted_cols.append(inputs_to_delete)
+        nodes_to_delete = []
         for i in range(tensor.shape[0]):
             node = cum_sums[t + 1] + i
             if labels[node] in isolated_ccs:
-                rows_to_delete.append(i)
-
-        cols_to_delete = []
-        for j in range(tensor.shape[1]):
-            node = cum_sums[t] + j
-            if labels[node] in isolated_ccs:
-                cols_to_delete.append(j)
-
+                nodes_to_delete.append(i)
+        all_deleted_rows.append(nodes_to_delete)
+        if t != len(weights_array) - 1:
+            all_deleted_cols.append(nodes_to_delete)
+    rows_right_len = "all_deleted_rows has the wrong length!"
+    assert len(all_deleted_rows) == len(weights_array), rows_right_len
+    cols_right_len = "all_deleted_cols has the wrong length!"
+    assert len(all_deleted_cols) == len(weights_array), cols_right_len
+    new_weights_array = []
+    for t, tensor in enumerate(weights_array):
+        rows_to_delete = all_deleted_rows[t]
+        cols_to_delete = all_deleted_cols[t]
         rows_deleted = np.delete(tensor, rows_to_delete, 0)
         new_tensor = np.delete(rows_deleted, cols_to_delete, 1)
         new_weights_array.append(new_tensor)
-        all_deleted_rows.append(rows_to_delete)
-        all_deleted_cols.apppend(cols_to_delete)
     new_adj_mat = weights_to_graph(new_weights_array)
     return new_weights_array, new_adj_mat, all_deleted_rows, all_deleted_cols
 
