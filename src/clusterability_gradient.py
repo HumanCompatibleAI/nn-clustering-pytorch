@@ -14,6 +14,7 @@ from utils import (
 )
 
 # TODO: make this work beautifully with CNNs
+# TODO: add weight normalization code
 
 
 def adj_to_laplacian_and_degs(adj_mat_csr):
@@ -163,7 +164,7 @@ def get_dy_dW_np(degree_list, mat_list, dy_dL, num_workers=1):
     return grad_list
 
 
-class MyEigenvalues(Function):
+class LaplacianEigenvalues(Function):
     """
     A torch autograd Function that takes the eigenvalues of the normalized
     Laplacian of a neural network.
@@ -188,9 +189,8 @@ class MyEigenvalues(Function):
             outers.append(
                 torch.from_numpy(np.outer(evecs[i + 1], evecs[i + 1])))
         ctx.save_for_backward(torch.tensor(num_workers),
-                              torch.tensor(num_eigs),
-                              torch.from_numpy(del_rows),
-                              torch.from_numpy(del_cols),
+                              torch.tensor(num_eigs), torch.tensor(del_rows),
+                              torch.tensor(del_cols),
                               torch.from_numpy(degree_vec), *outers,
                               *thin_w_tens_array)
         return torch.from_numpy(evals)

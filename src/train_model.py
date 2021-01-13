@@ -9,15 +9,21 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
+from clusterability_gradient import LaplacianEigenvalues
+from utils import get_graph_weights_from_state_dict
+
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
 train_exp.observers.append(FileStorageObserver('training_runs'))
+
+# probably should define a global variable for the list of datasets.
+# maybe in a utils file or something.
 
 
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_epochs = 5
+    num_epochs = 20
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -25,10 +31,12 @@ def basic_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 2,
+        'num pruning epochs': 10,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
+    cluster_gradient = True
+    cluster_gradient_config = {'num_workers': 2, 'num_eigs': 3, 'lambda': 0.1}
     _ = locals()
     del _
 
@@ -95,7 +103,8 @@ class MyMLP(nn.Module):
 
 
 def train_and_save(network, train_loader, test_loader, num_epochs,
-                   pruning_config, optimizer, criterion, log_interval, device,
+                   pruning_config, cluster_gradient, cluster_gradient_config,
+                   optimizer, criterion, log_interval, device,
                    model_path_prefix, _run):
     """
     Train a neural network, printing out log information, and saving along the
@@ -110,6 +119,13 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                     prunes, 'num pruning epochs', int representing the number of
                     epochs to prune for, and 'final sparsity', float
                     representing how sparse the final net should be
+    cluster_gradient: bool representing whether or not to apply the
+                      clusterability gradient
+    cluster_gradient_config: dict containing 'num_eigs', the int number of
+                             eigenvalues to regularize, 'num_workers', the int
+                             number of CPU workers to use to calculate the
+                             gradient and 'lambda', the float regularization
+                             strength to use per eigenvalue
     optimizer: pytorch optimizer. Might be SGD or Adam.
     criterion: loss function.
     log_interval: int. how many training steps between logging infodumps.
@@ -147,12 +163,25 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
             optimizer.zero_grad()
             outputs = network(inputs)
             loss = criterion(outputs, labels)
+            if cluster_gradient:
+                clust_grad_num_workers = cluster_gradient_config['num_workers']
+                clust_grad_num_eigs = cluster_gradient_config['num_eigs']
+                clust_grad_lambda = cluster_gradient_config['lambda']
+                weight_mats = get_graph_weights_from_state_dict(
+                    network.state_dict())
+                eig_sum = torch.sum(
+                    LaplacianEigenvalues.apply(clust_grad_num_workers,
+                                               clust_grad_num_eigs,
+                                               *weight_mats))
+                loss += ((clust_grad_lambda / clust_grad_num_eigs) * eig_sum)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
             if i % log_interval == log_interval - 1:
                 avg_loss = running_loss / log_interval
                 print(f"batch {i}, avg loss {avg_loss}")
+                if cluster_gradient:
+                    print(f"laplacian eigenvalue sum {eig_sum}")
                 _run.log_scalar("training.loss", avg_loss)
                 loss_list.append((epoch, i, avg_loss))
                 running_loss = 0.0
@@ -226,7 +255,8 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 @train_exp.automain
 def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
-                 pruning_config, _run):
+                 pruning_config, cluster_gradient, cluster_gradient_config,
+                 _run):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
@@ -234,6 +264,18 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
     model_dir: string. relative path to directory where model should be saved
+    pruning_config: dict containing 'exponent', a numeric type, 'frequency', int
+                    representing the number of training steps to have between
+                    prunes, 'num pruning epochs', int representing the number of
+                    epochs to prune for, and 'final sparsity', float
+                    representing how sparse the final net should be
+    cluster_gradient: bool representing whether or not to apply the
+                      clusterability gradient
+    cluster_gradient_config: dict containing 'num_eigs', the int number of
+                             eigenvalues to regularize, 'num_workers', the int
+                             number of CPU workers to use to calculate the
+                             gradient and 'lambda', the float regularization
+                             strength to use per eigenvalue
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
@@ -248,7 +290,8 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     # probably partly do in config
     test_acc, test_loss, loss_list = train_and_save(
         my_net, train_loader, test_loader, num_epochs, pruning_config,
-        optimizer, criterion, log_interval, device, save_path_prefix, _run)
+        cluster_gradient, cluster_gradient_config, optimizer, criterion,
+        log_interval, device, save_path_prefix, _run)
     return {
         'test acc': test_acc,
         'test loss': test_loss,

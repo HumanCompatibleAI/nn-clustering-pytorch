@@ -24,22 +24,35 @@ def compute_percentile(x, arr):
     return r / n
 
 
+def get_graph_weights_from_state_dict(state_dict):
+    """
+    Takes a pytorch state dict, and returns an array of the weight tensors that
+    constitute the graph we're working with.
+    NB: relies on the dict having the expected order.
+    state_dict: a pytorch state dict
+    returns: an array of pytorch tensors
+    """
+    assert isinstance(state_dict, collections.OrderedDict)
+    weights = []
+    for string in state_dict:
+        if string.endswith("weight"):
+            weights.append(state_dict[string])
+    return weights
+
+
 def load_model_weights_pytorch(model_path, pytorch_device):
     """
     Take a pytorch saved model state dict, and return an array of the weight
-    tensors
+    tensors as numpy arrays
     NB: this relies on the dict being ordered in the right order.
     model_path: a string, pointing to a pytorch saved state_dict
     pytorch_device: pytorch device, which device to save the model to
     returns: array of numpy arrays of weight tensors (no biases)
     """
     state_dict = torch.load(model_path, map_location=pytorch_device)
-    assert isinstance(state_dict, collections.OrderedDict)
-    weights = []
-    for string in state_dict:
-        if string.endswith("weight"):
-            weights.append(state_dict[string].detach().cpu().numpy())
-    return weights
+    torch_weights = get_graph_weights_from_state_dict(state_dict)
+    np_weights = [tens.detach().cpu().numpy() for tens in torch_weights]
+    return np_weights
 
 
 def delete_isolated_ccs(weights_array, adj_mat):
@@ -55,7 +68,7 @@ def delete_isolated_ccs(weights_array, adj_mat):
     nc, labels = sparse.csgraph.connected_components(adj_mat, directed=False)
     # if there's only one connected component, don't bother
     if nc == 1:
-        return weights_array, adj_mat
+        return weights_array, adj_mat, [], []
     widths = weights_to_layer_widths(weights_array)
     cum_sums = np.cumsum(widths)
     cum_sums = np.insert(cum_sums, 0, 0)
@@ -65,7 +78,7 @@ def delete_isolated_ccs(weights_array, adj_mat):
         initial_ccs.intersection(final_ccs))
     # if there aren't isolated ccs, don't bother deleting any
     if not isolated_ccs:
-        return weights_array, adj_mat
+        return weights_array, adj_mat, [], []
     # go through weights_array, construct new one without rows and cols in
     # isolated clusters
     new_weights_array = []
