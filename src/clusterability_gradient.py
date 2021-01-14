@@ -176,9 +176,13 @@ class LaplacianEigenvalues(Function):
         assert isinstance(num_workers, int)
         assert isinstance(num_eigs, int)
         w_tens_np_array = [tens.detach().cpu().numpy() for tens in args]
+        num_tensors = len(w_tens_np_array)
         adj_mat_csr = weights_to_graph(w_tens_np_array)
-        my_tup = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
-        thin_w_array, thin_adj_mat, del_rows, del_cols = my_tup
+        (thin_w_array, thin_adj_mat, del_rows,
+         del_cols) = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
+        assert len(del_rows) == num_tensors
+        assert len(del_cols) == num_tensors
+        assert len(thin_w_array) == num_tensors
         thin_w_tens_array = [torch.from_numpy(tens) for tens in thin_w_array]
         lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
         evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, sigma=-1.0, which='LM')
@@ -188,28 +192,38 @@ class LaplacianEigenvalues(Function):
         for i in range(num_eigs):
             outers.append(
                 torch.from_numpy(np.outer(evecs[i + 1], evecs[i + 1])))
+        del_rows_tensors = [torch.tensor(entry) for entry in del_rows]
+        del_cols_tensors = [torch.tensor(entry) for entry in del_cols]
         ctx.save_for_backward(torch.tensor(num_workers),
-                              torch.tensor(num_eigs), torch.tensor(del_rows),
-                              torch.tensor(del_cols),
-                              torch.from_numpy(degree_vec), *outers,
-                              *thin_w_tens_array)
+                              torch.tensor(num_eigs),
+                              torch.tensor(num_tensors),
+                              torch.from_numpy(degree_vec), *thin_w_tens_array,
+                              *del_rows_tensors, *del_cols_tensors, *outers)
         return torch.from_numpy(evals[1:])
 
     @staticmethod
     def backward(ctx, dy):
-        (num_workers_tens, num_eigs_tens, del_rows_tens, del_cols_tens,
-         degree_vec_tens, *thin_w_array_and_outers) = ctx.saved_tensors
+        (num_workers_tens, num_eigs_tens, num_tensors_tens, degree_vec_tens,
+         *misc_stuff) = ctx.saved_tensors
         num_workers = num_workers_tens.item()
         num_eigs = num_eigs_tens.item()
-        del_rows = del_rows_tens.detach().cpu().numpy()
-        del_cols = del_cols_tens.detach().cpu().numpy()
+        num_tensors = num_tensors_tens.item()
         degree_vec = degree_vec_tens.detach().cpu().numpy()
-        outers_tens = thin_w_array_and_outers[:num_eigs]
-        thin_w_tens_array = thin_w_array_and_outers[num_eigs:]
-        outers = [outer.detach().cpu().numpy() for outer in outers_tens]
+        assert len(misc_stuff) == 3 * num_tensors + num_eigs
+        thin_w_tens_array = misc_stuff[:num_tensors]
+        del_rows_tens = misc_stuff[num_tensors:2 * num_tensors]
+        del_cols_tens = misc_stuff[2 * num_tensors:3 * num_tensors]
+        outers_tens = misc_stuff[3 * num_tensors:]
         thin_w_np_array = [
             tens.detach().cpu().numpy() for tens in thin_w_tens_array
         ]
+        del_rows = [
+            entry.detach().cpu().numpy().tolist() for entry in del_rows_tens
+        ]
+        del_cols = [
+            entry.detach().cpu().numpy().tolist() for entry in del_cols_tens
+        ]
+        outers = [outer.detach().cpu().numpy() for outer in outers_tens]
 
         dy_dL = np.tensordot(dy, outers, [[0], [0]])
         penult_grad = get_dy_dW_np(degree_vec, thin_w_np_array, dy_dL,

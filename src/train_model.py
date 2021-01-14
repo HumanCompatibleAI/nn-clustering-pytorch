@@ -10,7 +10,7 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from utils import get_graph_weights_from_state_dict
+from utils import get_graph_weights_from_live_net
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -25,7 +25,7 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_epochs = 20
+    num_epochs = 3
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -33,12 +33,12 @@ def basic_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 10,
+        'num pruning epochs': 2,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
     cluster_gradient = True
-    cluster_gradient_config = {'num_workers': 2, 'num_eigs': 3, 'lambda': 0.1}
+    cluster_gradient_config = {'num_workers': 2, 'num_eigs': 3, 'lambda': 1}
     _ = locals()
     del _
 
@@ -104,6 +104,65 @@ class MyMLP(nn.Module):
         return x
 
 
+def get_prunable_params(network):
+    """
+    Get the parameters of a network to prune.
+    network: some object that is of class nn.Module or something.
+    Returns: a list of tensors to prune.
+    """
+    prune_params_list = []
+    for name, module in network.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            prune_params_list.append((module, 'weight'))
+    return prune_params_list
+
+
+def calculate_clust_reg(cluster_gradient_config, network):
+    """
+    Calculate the clusterability regularization term of a network.
+    cluster_gradient_config: dict containing 'num_eigs', the int number of
+                             eigenvalues to regularize, 'num_workers', the int
+                             number of CPU workers to use to calculate the
+                             gradient and 'lambda', the float regularization
+                             strength to use per eigenvalue
+    network: a pytorch network.
+    returns: a tensor float.
+    """
+    num_workers = cluster_gradient_config['num_workers']
+    num_eigs = cluster_gradient_config['num_eigs']
+    cg_lambda = cluster_gradient_config['lambda']
+    weight_mats = get_graph_weights_from_live_net(network)
+    # TODO: above line won't work once we start using conv nets
+    eig_sum = torch.sum(
+        LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
+    return (cg_lambda / num_eigs) * eig_sum
+
+
+def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
+                              num_prunes_total, prune_exp, current_density):
+    """
+    Convenience function to calculate the sparsity factor to prune with.
+    final_sparsity: a float between 0 and 1
+    num_prunes_so_far: an integer for the number of times pruning has been
+                       applied.
+    num_prunes_total: an integer representing the total number of times pruning
+                      will ever occur.
+    prune_exp: a numeric type regulating the pruning schedule
+    current_density: a float representing how dense the network currently is.
+    returns: a float giving the factor of weights to prune.
+    """
+    assert final_sparsity >= 0
+    assert final_sparsity <= 1
+    assert current_density >= 1 - final_sparsity
+    # is the above actually exactly true?
+    assert current_density <= 1
+    new_sparsity = (final_sparsity *
+                    (1 - (1 -
+                          (num_prunes_so_far / num_prunes_total))**prune_exp))
+    sparsity_factor = 1 - ((1. - new_sparsity) / current_density)
+    return sparsity_factor
+
+
 def train_and_save(network, train_loader, test_loader, num_epochs,
                    pruning_config, cluster_gradient, cluster_gradient_config,
                    optimizer, criterion, log_interval, device,
@@ -151,10 +210,7 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     num_prunes_so_far = 0
     train_step_counter = 0
 
-    prune_params_list = []
-    for name, module in network.named_modules():
-        if isinstance(module, torch.nn.Linear):
-            prune_params_list.append((module, 'weight'))
+    prune_params_list = get_prunable_params(network)
 
     for epoch in range(num_epochs):
         print("Start of epoch", epoch)
@@ -166,16 +222,9 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
             outputs = network(inputs)
             loss = criterion(outputs, labels)
             if cluster_gradient:
-                clust_grad_num_workers = cluster_gradient_config['num_workers']
-                clust_grad_num_eigs = cluster_gradient_config['num_eigs']
-                clust_grad_lambda = cluster_gradient_config['lambda']
-                weight_mats = get_graph_weights_from_state_dict(
-                    network.state_dict())
-                eig_sum = torch.sum(
-                    LaplacianEigenvalues.apply(clust_grad_num_workers,
-                                               clust_grad_num_eigs,
-                                               *weight_mats))
-                loss += ((clust_grad_lambda / clust_grad_num_eigs) * eig_sum)
+                clust_reg_term = calculate_clust_reg(cluster_gradient_config,
+                                                     network)
+                loss += clust_reg_term
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -183,19 +232,15 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                 avg_loss = running_loss / log_interval
                 print(f"batch {i}, avg loss {avg_loss}")
                 if cluster_gradient:
-                    print(f"laplacian eigenvalue sum {eig_sum}")
+                    print(f"cluster regularization term {clust_reg_term}")
                 _run.log_scalar("training.loss", avg_loss)
                 loss_list.append((epoch, i, avg_loss))
                 running_loss = 0.0
             if epoch >= start_pruning_epoch:
                 if train_step_counter % prune_freq == 0:
-                    new_sparsity = (
-                        final_sparsity *
-                        (1 -
-                         (1 -
-                          (num_prunes_so_far / num_prunes_total))**prune_exp))
-                    sparsity_factor = 1 - (
-                        (1. - new_sparsity) / current_density)
+                    sparsity_factor = calculate_sparsity_factor(
+                        final_sparsity, num_prunes_so_far, num_prunes_total,
+                        prune_exp, current_density)
                     prune.global_unstructured(
                         prune_params_list,
                         pruning_method=prune.L1Unstructured,

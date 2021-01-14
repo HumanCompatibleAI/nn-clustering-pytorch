@@ -24,11 +24,29 @@ def compute_percentile(x, arr):
     return r / n
 
 
+def get_graph_weights_from_live_net(network):
+    """
+    Takes a neural network, and gets weights from it to use to turn it into a
+    graph.
+    NB: requires things to only have linear layers
+    network: a neural network, currently an MLP. Probably has to inherit from
+             nn.Module
+    returns: a list of pytorch tensors.
+    """
+    weight_tensors = []
+    for module in network.modules():
+        if isinstance(module, torch.nn.Linear):
+            weight_tensors.append(module.weight)
+    return weight_tensors
+
+
 def get_graph_weights_from_state_dict(state_dict):
     """
     Takes a pytorch state dict, and returns an array of the weight tensors that
     constitute the graph we're working with.
     NB: relies on the dict having the expected order.
+    NB: also relies on the network not being actively pruned
+    NB: might break once batch norm happens
     state_dict: a pytorch state dict
     returns: an array of pytorch tensors
     """
@@ -127,10 +145,6 @@ def invert_deleted_neurons_np(tens, rows_deleted, cols_deleted):
     cols_deleted, for a 2d array), then you'd get the input back. The entries
     that would be deleted are input as 0.0.
     """
-    if len(rows_deleted) > 0:
-        assert tens.shape[0] > rows_deleted[-1]
-    if len(cols_deleted) > 0:
-        assert tens.shape[1] > cols_deleted[-1]
     for row in rows_deleted:
         tens = np.insert(tens, row, 0.0, axis=0)
     for col in cols_deleted:
