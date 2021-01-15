@@ -24,6 +24,21 @@ def compute_percentile(x, arr):
     return r / n
 
 
+def get_weighty_modules_from_live_net(network):
+    """
+    Takes a neural network, and returns the modules from it that have proper
+    weight tensors (i.e. not including batchnorm modules)
+    NB: so far, requires things to only have linear layers
+    network: a neural network, that has to inherit from nn.Module
+    returns: a list of nn.Modules
+    """
+    weighty_modules = []
+    for module in network.modules():
+        if isinstance(module, torch.nn.Linear):
+            weighty_modules.append(module)
+    return weighty_modules
+
+
 def get_graph_weights_from_live_net(network):
     """
     Takes a neural network, and gets weights from it to use to turn it into a

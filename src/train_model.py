@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +11,10 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from utils import get_graph_weights_from_live_net
+from utils import (
+    get_graph_weights_from_live_net,
+    get_weighty_modules_from_live_net,
+)
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -138,6 +142,49 @@ def calculate_clust_reg(cluster_gradient_config, network):
     return (cg_lambda / num_eigs) * eig_sum
 
 
+def normalize_weights(network, eps=1e-3):
+    """
+    'Normalize' the weights of a network, so that for each hidden neuron, the
+    norm of incoming weights to that neuron is sqrt(2). For a ReLU network,
+    this operation preserves network functionality.
+    network: a neural network. has to inherit from torch.nn.module. Currently
+             probably has to be an MLP
+    eps: a float that should be small relative to sqrt(2), to add stability.
+    returns nothing: just modifies the network in-place
+    Current deadly problem: seems to cause problems when you start pruning.
+    """
+    layers = get_weighty_modules_from_live_net(network)
+    with torch.no_grad():
+        for idx in range(len(layers) - 1):
+            incoming_weights = layers[idx].weight
+            incoming_biases = layers[idx].bias
+            outgoing_weights = layers[idx + 1].weight
+            num_neurons = incoming_weights.shape[0]
+            assert num_neurons == outgoing_weights.shape[1]
+            assert num_neurons == incoming_biases.shape[0]
+
+            unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
+            all_inc_weights = torch.cat((incoming_weights, unsqueezed_bias), 1)
+            scales = torch.linalg.norm(all_inc_weights, dim=1)
+            scales /= np.sqrt(2)
+            scales += eps
+            scales_rows = torch.unsqueeze(scales, 1)
+
+            layers[idx].bias = nn.Parameter(torch.div(incoming_biases, scales))
+            layers[idx].weight = nn.Parameter(
+                torch.div(incoming_weights, scales_rows))
+            layers[idx + 1].weight = nn.Parameter(
+                torch.mul(outgoing_weights, scales))
+            for name, param in layers[idx].named_parameters():
+                if name == 'weight_orig':
+                    param = nn.Parameter(torch.div(param, scales_rows))
+                if name == 'bias_orig':
+                    param = nn.Parameter(torch.div(param, scales))
+            for name_param in layers[idx + 1].named_parameters():
+                if name == 'weight_orig':
+                    param = nn.Parameter(torch.mul(param, scales))
+
+
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
                               num_prunes_total, prune_exp, current_density):
     """
@@ -221,7 +268,8 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
             optimizer.zero_grad()
             outputs = network(inputs)
             loss = criterion(outputs, labels)
-            if cluster_gradient:
+            if cluster_gradient and i % 80 == 0:
+                normalize_weights(network)
                 clust_reg_term = calculate_clust_reg(cluster_gradient_config,
                                                      network)
                 loss += clust_reg_term
