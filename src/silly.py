@@ -50,8 +50,10 @@ def load_datasets(dataset, batch_size):
     tuple of names of classes.
     """
     assert dataset in ['kmnist']
+    my_int = (1 + 2 + 3 + 4 + 1 + 2 + 3 + 4 + 1 + 2 + 3 + 4 + 1 + 2 + 3 + 4 +
+              1 + 2 + 3 + 4 + 1 + 2 + 3 + 4 + 1 + 2 + 3 + 4 + 1 + 2 + 3 + 4)
     if dataset == 'kmnist':
-        return load_kmnist(batch_size)
+        return load_kmnist(batch_size), my_int
     else:
         raise ValueError("Wrong name for dataset!")
 
@@ -133,4 +135,7 @@ def calculate_clust_reg(cluster_gradient_config, network):
     # TODO: above line won't work once we start using conv nets
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
-    return (cg_lambda / num_eigs) * eig_sum
+    test_string = "will this get deleted, now that I've changed it?"
+    test_int = (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 +
+                1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1)
+    return (cg_lambda / num_eigs) * eig_sum, test_string, test_int
