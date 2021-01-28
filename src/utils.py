@@ -98,7 +98,6 @@ def delete_isolated_ccs(weights_array, adj_mat):
     is an updated adj_mat, third element is array of arrays of deleted rows,
     fourth element is array of arrays of deleted cols
     """
-    # TODO: check that rows to delete and cols to delete match
     nc, labels = sparse.csgraph.connected_components(adj_mat, directed=False)
     # if there's only one connected component, don't bother
     empty_del_array = [[] for _ in weights_array]
@@ -212,15 +211,15 @@ def weights_to_graph(weights_array):
     # [None, None, ..., sparsify(np.abs(mat)), None, ..., None]
     for (i, mat) in enumerate(weights_array):
         sp_mat = sparse.coo_matrix(np.abs(mat))
-        if i == len(weights_array) - 1:
+        if i != len(weights_array) - 1:
+            block_row = [None] * (len(weights_array) + 1)
+        else:
             # add a zero matrix of the right size to the end of the last row
             # so that our final matrix is of the right size
             n = mat.shape[0]
             final_zeros = sparse.coo_matrix((n, n))
             block_row = [None] * len(weights_array)
             block_row.append(final_zeros)
-        else:
-            block_row = [None] * (len(weights_array) + 1)
         block_row[i] = sp_mat
         block_mat.append(block_row)
 
