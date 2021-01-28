@@ -151,7 +151,7 @@ def normalize_weights(network, eps=1e-3):
              probably has to be an MLP
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
-    Current deadly problem: seems to cause problems when you start pruning.
+    Current deadly problem: destroys training accuracy
     """
     layers = get_weighty_modules_from_live_net(network)
     with torch.no_grad():
