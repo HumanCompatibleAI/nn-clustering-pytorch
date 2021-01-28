@@ -116,7 +116,7 @@ def get_prunable_params(network):
     """
     prune_params_list = []
     for name, module in network.named_modules():
-        if isinstance(module, torch.nn.Linear):
+        if isinstance(module, nn.Linear):
             prune_params_list.append((module, 'weight'))
     return prune_params_list
 
@@ -170,19 +170,29 @@ def normalize_weights(network, eps=1e-3):
             scales += eps
             scales_rows = torch.unsqueeze(scales, 1)
 
-            layers[idx].bias = nn.Parameter(torch.div(incoming_biases, scales))
-            layers[idx].weight = nn.Parameter(
-                torch.div(incoming_weights, scales_rows))
-            layers[idx + 1].weight = nn.Parameter(
-                torch.mul(outgoing_weights, scales))
+            incoming_weights_unpruned = True
+            incoming_biases_unpruned = True
+            outgoing_weights_unpruned = True
             for name, param in layers[idx].named_parameters():
                 if name == 'weight_orig':
                     param = nn.Parameter(torch.div(param, scales_rows))
+                    incoming_weights_unpruned = False
                 if name == 'bias_orig':
                     param = nn.Parameter(torch.div(param, scales))
-            for name_param in layers[idx + 1].named_parameters():
+                    incoming_biases_unpruned = False
+            for name, param in layers[idx + 1].named_parameters():
                 if name == 'weight_orig':
                     param = nn.Parameter(torch.mul(param, scales))
+                    outgoing_weights_unpruned = False
+            if incoming_weights_unpruned:
+                layers[idx].weight = nn.Parameter(
+                    torch.div(incoming_weights, scales_rows))
+            if incoming_biases_unpruned:
+                layers[idx].bias = nn.Parameter(
+                    torch.div(incoming_biases, scales))
+            if outgoing_weights_unpruned:
+                layers[idx + 1].weight = nn.Parameter(
+                    torch.mul(outgoing_weights, scales))
 
 
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
@@ -374,7 +384,6 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-
     criterion = nn.CrossEntropyLoss()
     my_net = MyMLP()
     optimizer = optim.Adam(my_net.parameters())
