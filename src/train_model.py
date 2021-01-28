@@ -299,10 +299,8 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                     sparsity_factor = calculate_sparsity_factor(
                         final_sparsity, num_prunes_so_far, num_prunes_total,
                         prune_exp, current_density)
-                    prune.global_unstructured(
-                        prune_params_list,
-                        pruning_method=prune.L1Unstructured,
-                        amount=sparsity_factor)
+                    for module, name in prune_params_list:
+                        prune.l1_unstructured(module, name, sparsity_factor)
                     current_density *= 1 - sparsity_factor
                     num_prunes_so_far += 1
                 train_step_counter += 1
