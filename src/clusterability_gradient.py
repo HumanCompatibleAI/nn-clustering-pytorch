@@ -203,6 +203,9 @@ class LaplacianEigenvalues(Function):
 
     @staticmethod
     def backward(ctx, dy):
+        # NB: this is a possibly sketchy way of selecting the device
+        device = (torch.device("cuda")
+                  if torch.cuda.is_available() else torch.device("cpu"))
         (num_workers_tens, num_eigs_tens, num_tensors_tens, degree_vec_tens,
          *misc_stuff) = ctx.saved_tensors
         num_workers = num_workers_tens.item()
@@ -235,5 +238,5 @@ class LaplacianEigenvalues(Function):
         for (i, grad) in enumerate(penult_grad):
             fat_grad = invert_deleted_neurons_np(grad, del_rows[i],
                                                  del_cols[i])
-            final_grad.append(torch.from_numpy(fat_grad))
+            final_grad.append(torch.from_numpy(fat_grad).to(device))
         return tuple([None, None] + final_grad)
