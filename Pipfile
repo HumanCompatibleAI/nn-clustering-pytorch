@@ -12,6 +12,7 @@ scipy = "*"
 sklearn = "*"
 pathos = "*"
 pre-commit = "*"
+torchviz = "*"
 
 [dev-packages]
 
