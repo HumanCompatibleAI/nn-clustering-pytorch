@@ -29,7 +29,7 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_epochs = 3
+    num_epochs = 10
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -37,7 +37,7 @@ def basic_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 2,
+        'num pruning epochs': 5,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
@@ -151,48 +151,43 @@ def normalize_weights(network, eps=1e-3):
              probably has to be an MLP
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
-    Current deadly problem: destroys training accuracy
     """
     layers = get_weighty_modules_from_live_net(network)
-    with torch.no_grad():
-        for idx in range(len(layers) - 1):
-            incoming_weights = layers[idx].weight
-            incoming_biases = layers[idx].bias
-            outgoing_weights = layers[idx + 1].weight
-            num_neurons = incoming_weights.shape[0]
-            assert num_neurons == outgoing_weights.shape[1]
-            assert num_neurons == incoming_biases.shape[0]
+    for idx in range(len(layers) - 1):
+        incoming_weights = layers[idx].weight
+        incoming_biases = layers[idx].bias
+        outgoing_weights = layers[idx + 1].weight
+        num_neurons = incoming_weights.shape[0]
+        assert num_neurons == outgoing_weights.shape[1]
+        assert num_neurons == incoming_biases.shape[0]
 
-            unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
-            all_inc_weights = torch.cat((incoming_weights, unsqueezed_bias), 1)
-            scales = torch.linalg.norm(all_inc_weights, dim=1)
-            scales /= np.sqrt(2)
-            scales += eps
-            scales_rows = torch.unsqueeze(scales, 1)
+        unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
+        all_inc_weights = torch.cat((incoming_weights, unsqueezed_bias), 1)
+        scales = torch.linalg.norm(all_inc_weights, dim=1)
+        scales /= np.sqrt(2.)
+        scales += eps
+        scales_rows = torch.unsqueeze(scales, 1)
 
-            incoming_weights_unpruned = True
-            incoming_biases_unpruned = True
-            outgoing_weights_unpruned = True
-            for name, param in layers[idx].named_parameters():
-                if name == 'weight_orig':
-                    param = nn.Parameter(torch.div(param, scales_rows))
-                    incoming_weights_unpruned = False
-                if name == 'bias_orig':
-                    param = nn.Parameter(torch.div(param, scales))
-                    incoming_biases_unpruned = False
-            for name, param in layers[idx + 1].named_parameters():
-                if name == 'weight_orig':
-                    param = nn.Parameter(torch.mul(param, scales))
-                    outgoing_weights_unpruned = False
-            if incoming_weights_unpruned:
-                layers[idx].weight = nn.Parameter(
-                    torch.div(incoming_weights, scales_rows))
-            if incoming_biases_unpruned:
-                layers[idx].bias = nn.Parameter(
-                    torch.div(incoming_biases, scales))
-            if outgoing_weights_unpruned:
-                layers[idx + 1].weight = nn.Parameter(
-                    torch.mul(outgoing_weights, scales))
+        incoming_weights_unpruned = True
+        incoming_biases_unpruned = True
+        outgoing_weights_unpruned = True
+        for name, param in layers[idx].named_parameters():
+            if name == 'weight_orig':
+                param.data = torch.div(param, scales_rows)
+                incoming_weights_unpruned = False
+            if name == 'bias_orig':
+                param.data = torch.div(param, scales)
+                incoming_biases_unpruned = False
+        for name, param in layers[idx + 1].named_parameters():
+            if name == 'weight_orig':
+                param.data = torch.mul(param, scales)
+                outgoing_weights_unpruned = False
+        if incoming_weights_unpruned:
+            layers[idx].weight.data = torch.div(incoming_weights, scales_rows)
+        if incoming_biases_unpruned:
+            layers[idx].bias.data = torch.div(incoming_biases, scales)
+        if outgoing_weights_unpruned:
+            layers[idx + 1].weight.data = torch.mul(outgoing_weights, scales)
 
 
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
@@ -232,10 +227,10 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     test_loader: pytorch loader for the testing dataset
     num_epochs: int for the total number of epochs to train for (including any
                 pruning)
-    pruning_config: dict containing 'exponent', a numeric type, 'frequency', int
-                    representing the number of training steps to have between
-                    prunes, 'num pruning epochs', int representing the number of
-                    epochs to prune for, and 'final sparsity', float
+    pruning_config: dict containing 'exponent', a numeric type, 'frequency',
+                    int representing the number of training steps to have
+                    between prunes, 'num pruning epochs', int representing the
+                    number of epochs to prune for, and 'final sparsity', float
                     representing how sparse the final net should be
     cluster_gradient: bool representing whether or not to apply the
                       clusterability gradient
@@ -367,10 +362,10 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
     model_dir: string. relative path to directory where model should be saved
-    pruning_config: dict containing 'exponent', a numeric type, 'frequency', int
-                    representing the number of training steps to have between
-                    prunes, 'num pruning epochs', int representing the number of
-                    epochs to prune for, and 'final sparsity', float
+    pruning_config: dict containing 'exponent', a numeric type, 'frequency',
+                    int representing the number of training steps to have
+                    between prunes, 'num pruning epochs', int representing the
+                    number of epochs to prune for, and 'final sparsity', float
                     representing how sparse the final net should be
     cluster_gradient: bool representing whether or not to apply the
                       clusterability gradient
