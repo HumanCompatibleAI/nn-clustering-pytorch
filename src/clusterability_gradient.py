@@ -14,7 +14,6 @@ from utils import (
 )
 
 # TODO: make this work beautifully with CNNs
-# TODO: add weight normalization code
 
 
 def adj_to_laplacian_and_degs(adj_mat_csr):

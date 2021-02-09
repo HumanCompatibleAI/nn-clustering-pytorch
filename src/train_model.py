@@ -23,13 +23,11 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 # probably should define a global variable for the list of datasets.
 # maybe in a utils file or something.
 
-# TODO: write code to only apply clust grad once every n epochs
-
 
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_epochs = 10
+    num_epochs = 5
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -37,12 +35,17 @@ def basic_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 5,
+        'num pruning epochs': 2,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
-    cluster_gradient = True
-    cluster_gradient_config = {'num_workers': 2, 'num_eigs': 3, 'lambda': 1}
+    cluster_gradient = False
+    cluster_gradient_config = {
+        'num_workers': 2,
+        'num_eigs': 3,
+        'lambda': 1,
+        'frequency': 5
+    }
     _ = locals()
     del _
 
@@ -127,19 +130,22 @@ def calculate_clust_reg(cluster_gradient_config, network):
     cluster_gradient_config: dict containing 'num_eigs', the int number of
                              eigenvalues to regularize, 'num_workers', the int
                              number of CPU workers to use to calculate the
-                             gradient and 'lambda', the float regularization
-                             strength to use per eigenvalue
+                             gradient, 'lambda', the float regularization
+                             strength to use per eigenvalue, and 'frequency',
+                             the number of iterations between successive
+                             applications of the term.
     network: a pytorch network.
     returns: a tensor float.
     """
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
+    frequency = cluster_gradient_config['frequency']
     weight_mats = get_graph_weights_from_live_net(network)
     # TODO: above line won't work once we start using conv nets
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
-    return (cg_lambda / num_eigs) * eig_sum
+    return (cg_lambda / num_eigs) * frequency * eig_sum
 
 
 def normalize_weights(network, eps=1e-3):
@@ -237,8 +243,11 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     cluster_gradient_config: dict containing 'num_eigs', the int number of
                              eigenvalues to regularize, 'num_workers', the int
                              number of CPU workers to use to calculate the
-                             gradient and 'lambda', the float regularization
-                             strength to use per eigenvalue
+                             gradient, 'lambda', the float regularization
+                             strength to use per eigenvalue, and 'frequency',
+                             the number of iterations between successive
+                             applications of the term. Only accessed if
+                             cluster_gradient is True.
     optimizer: pytorch optimizer. Might be SGD or Adam.
     criterion: loss function.
     log_interval: int. how many training steps between logging infodumps.
@@ -273,11 +282,12 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
             optimizer.zero_grad()
             outputs = network(inputs)
             loss = criterion(outputs, labels)
-            if cluster_gradient and i % 80 == 0:
-                normalize_weights(network)
-                clust_reg_term = calculate_clust_reg(cluster_gradient_config,
-                                                     network)
-                loss += clust_reg_term
+            if cluster_gradient:
+                if i % cluster_gradient_config['frequency'] == 0:
+                    normalize_weights(network)
+                    clust_reg_term = calculate_clust_reg(
+                        cluster_gradient_config, network)
+                    loss += clust_reg_term
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -372,8 +382,11 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     cluster_gradient_config: dict containing 'num_eigs', the int number of
                              eigenvalues to regularize, 'num_workers', the int
                              number of CPU workers to use to calculate the
-                             gradient and 'lambda', the float regularization
-                             strength to use per eigenvalue
+                             gradient, 'lambda', the float regularization
+                             strength to use per eigenvalue, and 'frequency',
+                             the number of iterations between successive
+                             applications of the term. Only accessed if
+                             cluster_gradient is True.
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
