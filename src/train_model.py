@@ -237,7 +237,9 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                     int representing the number of training steps to have
                     between prunes, 'num pruning epochs', int representing the
                     number of epochs to prune for, and 'final sparsity', float
-                    representing how sparse the final net should be
+                    representing how sparse the final net should be.
+                    If 'num pruning epochs' is 0, no other elements are
+                    accessed.
     cluster_gradient: bool representing whether or not to apply the
                       clusterability gradient
     cluster_gradient_config: dict containing 'num_eigs', the int number of
@@ -260,16 +262,18 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     network.to(device)
     loss_list = []
 
-    prune_exp = pruning_config['exponent']
-    prune_freq = pruning_config['frequency']
     num_pruning_epochs = pruning_config['num pruning epochs']
     final_sparsity = pruning_config['final sparsity']
-    is_pruning = num_pruning_epochs != 0
-    current_density = 1.
     start_pruning_epoch = num_epochs - num_pruning_epochs
-    num_prunes_total = (num_pruning_epochs * len(train_loader)) // prune_freq
-    num_prunes_so_far = 0
-    train_step_counter = 0
+    is_pruning = num_pruning_epochs != 0
+    if is_pruning:
+        prune_exp = pruning_config['exponent']
+        prune_freq = pruning_config['frequency']
+        current_density = 1.
+        num_prunes_total = ((num_pruning_epochs * len(train_loader)) //
+                            prune_freq)
+        num_prunes_so_far = 0
+        train_step_counter = 0
 
     prune_params_list = get_prunable_params(network)
 
