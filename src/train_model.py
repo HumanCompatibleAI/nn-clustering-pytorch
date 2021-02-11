@@ -150,20 +150,6 @@ class MyCNN(nn.Module):
         return math.prod(size)
 
 
-def get_prunable_params(network):
-    """
-    Get the parameters of a network to prune.
-    network: some object that is of class nn.Module or something.
-    Returns: a list of tensors to prune.
-    """
-    prune_params_list = []
-    for name, module in network.named_modules():
-        # in future, might have to have a list of modules that are prunable
-        if isinstance(module, nn.Linear) or isinstance(module, nn.Conv2d):
-            prune_params_list.append((module, 'weight'))
-    return prune_params_list
-
-
 def calculate_clust_reg(cluster_gradient_config, network):
     """
     Calculate the clusterability regularization term of a network.
@@ -315,7 +301,8 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
         num_prunes_so_far = 0
         train_step_counter = 0
 
-    prune_params_list = get_prunable_params(network)
+    prune_modules_list = get_weighty_modules_from_live_net(network)
+    prune_params_list = [(mod, 'weight') for mod in prune_modules_list]
 
     for epoch in range(num_epochs):
         print("Start of epoch", epoch)
