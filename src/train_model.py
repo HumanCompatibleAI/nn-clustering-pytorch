@@ -30,12 +30,14 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 
 
 @train_exp.config
-def basic_config():
+def mlp_config():
+    # TODO: split into MLP and CNN configs
     batch_size = 128
     num_epochs = 3
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
+    net_type = 'mlp'
     # pruning will be as described in Zhu and Gupta 2017, arXiv:1710.01878
     pruning_config = {
         'exponent': 3,
@@ -51,6 +53,13 @@ def basic_config():
         'lambda': 1,
         'frequency': 5
     }
+    _ = locals()
+    del _
+
+
+@train_exp.named_config
+def cnn_config():
+    net_type = 'cnn'
     _ = locals()
     del _
 
@@ -397,12 +406,13 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 
 @train_exp.automain
-def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
-                 pruning_config, cluster_gradient, cluster_gradient_config,
-                 _run):
+def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
+                 model_dir, pruning_config, cluster_gradient,
+                 cluster_gradient_config, _run):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
+    net_type: string indicating whether the model is an MLP or a CNN
     num_epochs: int
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
@@ -430,11 +440,10 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     my_net = MyCNN()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
-    save_path_prefix = model_dir + dataset
+    save_path_prefix = model_dir + net_type + dataset
     # TODO: come up with better way of generating save_path_prefix
     # or add info as required
     # probably partly do in config
-    # one thing to include is model type
     test_acc, test_loss, loss_list = train_and_save(
         my_net, train_loader, test_loader, num_epochs, pruning_config,
         cluster_gradient, cluster_gradient_config, optimizer, criterion,

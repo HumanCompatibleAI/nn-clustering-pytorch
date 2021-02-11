@@ -27,13 +27,22 @@ shuffle_and_clust.observers.append(FileStorageObserver('shuffle_clust_runs'))
 
 @shuffle_and_clust.config
 def basic_config():
+    # TODO: split this and all other configs into MLP + CNN configs
     num_clusters = 4
     weights_path = "./models/kmnist.pth"
+    net_type = 'mlp'
     shuffle_method = "all"
     epsilon = 1e-9
-    num_samples = 10
-    num_workers = 1
+    num_samples = 100
+    num_workers = 4
     eigen_solver = 'arpack'
+    _ = locals()
+    del _
+
+
+@shuffle_and_clust.named_config
+def cnn_config():
+    net_type = 'cnn'
     _ = locals()
     del _
 
@@ -95,13 +104,14 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
 
 
 @shuffle_and_clust.automain
-def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
+def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
                    num_samples, num_workers, shuffle_method):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
     connected components.
     weights_path: path to where weights are saved. String suffices.
+    net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
@@ -120,7 +130,7 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    weights_array_ = load_model_weights_pytorch(weights_path, device)
+    weights_array_ = load_model_weights_pytorch(weights_path, net_type, device)
     adj_mat_ = weights_to_graph(weights_array_)
     weights_array, adj_mat, _, _ = delete_isolated_ccs(weights_array_,
                                                        adj_mat_)

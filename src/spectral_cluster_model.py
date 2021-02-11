@@ -7,13 +7,8 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
-from utils import (
-    delete_isolated_ccs,
-    load_model_weights_pytorch,
-    weights_to_graph,
-)
-
-# TODO: extend to CNNs etc.
+from graph_utils import delete_isolated_ccs, weights_to_graph
+from utils import load_model_weights_pytorch
 
 clust_exp = Experiment('cluster_model')
 clust_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -24,8 +19,16 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 def basic_config():
     num_clusters = 4
     weights_path = "./models/kmnist.pth"
+    net_type = 'mlp'
     epsilon = 1e-9
     eigen_solver = 'arpack'
+    _ = locals()
+    del _
+
+
+@clust_exp.named_config
+def cnn_config():
+    net_type = 'cnn'
     _ = locals()
     del _
 
@@ -115,11 +118,13 @@ def weights_array_to_clustering_and_quality(weights_array, num_clusters,
 
 
 @clust_exp.automain
-def run_experiment(weights_path, num_clusters, eigen_solver, epsilon):
+def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
+                   epsilon):
     """
     load saved weights, delete any isolated connected components, cluster them,
     get their n-cut and the clustering
     weights_path: path to where weights are saved. String suffices.
+    net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
@@ -128,7 +133,7 @@ def run_experiment(weights_path, num_clusters, eigen_solver, epsilon):
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    weights_array_ = load_model_weights_pytorch(weights_path, device)
+    weights_array_ = load_model_weights_pytorch(weights_path, net_type, device)
     return weights_array_to_clustering_and_quality(weights_array_,
                                                    num_clusters, eigen_solver,
                                                    epsilon)
