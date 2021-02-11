@@ -16,6 +16,7 @@ from clusterability_gradient import LaplacianEigenvalues
 from utils import (
     get_graph_weights_from_live_net,
     get_weighty_modules_from_live_net,
+    vector_stretch,
 )
 
 train_exp = Experiment('train_model')
@@ -203,15 +204,23 @@ def normalize_weights(network, eps=1e-3):
         incoming_biases = layers[idx].bias
         outgoing_weights = layers[idx + 1].weight
         num_neurons = incoming_weights.shape[0]
-        assert num_neurons == outgoing_weights.shape[1]
+        assert outgoing_weights.shape[1] % num_neurons == 0
         assert num_neurons == incoming_biases.shape[0]
 
         unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
-        all_inc_weights = torch.cat((incoming_weights, unsqueezed_bias), 1)
+        flat_weights = torch.flatten(incoming_weights, start_dim=1)
+        all_inc_weights = torch.cat((flat_weights, unsqueezed_bias), 1)
         scales = torch.linalg.norm(all_inc_weights, dim=1)
         scales /= np.sqrt(2.)
         scales += eps
         scales_rows = torch.unsqueeze(scales, 1)
+        for i in range(len(incoming_weights.shape)):
+            if i > 1:
+                scales_rows = torch.unsqueeze(scales_rows, i)
+        scales_mul = vector_stretch(scales, outgoing_weights.shape[1])
+        for i in range(len(outgoing_weights.shape) - 1):
+            if i > 0:
+                scales_mul = torch.unsqueeze(scales_mul, i)
 
         incoming_weights_unpruned = True
         incoming_biases_unpruned = True
@@ -225,14 +234,15 @@ def normalize_weights(network, eps=1e-3):
                 incoming_biases_unpruned = False
         for name, param in layers[idx + 1].named_parameters():
             if name == 'weight_orig':
-                param.data = torch.mul(param, scales)
+                param.data = torch.mul(param, scales_mul)
                 outgoing_weights_unpruned = False
         if incoming_weights_unpruned:
             layers[idx].weight.data = torch.div(incoming_weights, scales_rows)
         if incoming_biases_unpruned:
             layers[idx].bias.data = torch.div(incoming_biases, scales)
         if outgoing_weights_unpruned:
-            layers[idx + 1].weight.data = torch.mul(outgoing_weights, scales)
+            layers[idx + 1].weight.data = torch.mul(outgoing_weights,
+                                                    scales_mul)
 
 
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
@@ -438,6 +448,7 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
     criterion = nn.CrossEntropyLoss()
     # my_net = MyMLP()
     my_net = MyCNN()
+    # TODO: use net_type to choose net
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
     save_path_prefix = model_dir + net_type + dataset

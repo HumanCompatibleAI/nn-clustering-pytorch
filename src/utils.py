@@ -125,3 +125,26 @@ def weights_to_layer_widths(weights_array):
     layer_widths = [x.shape[1] for x in weights_array]
     layer_widths.append(weights_array[-1].shape[0])
     return layer_widths
+
+
+def vector_stretch(vector, length):
+    """
+    takes a pytorch 1d tensor, and 'stretches' it so that it has the right
+    length. e.g. vector_stretch(torch.Tensor([1,2,3]), 6)
+    == torch.Tensor([1,1,2,2,3,3]).
+    vector: 1d pytorch tensor
+    length: int length to stretch to. Must be an integer multiple of the length
+            of vector
+    returns: 1d pytorch tensor.
+    """
+    assert isinstance(vector, torch.Tensor)
+    assert len(vector.shape) == 1
+    start_len = vector.shape[0]
+    assert length % start_len == 0
+    mult = int(length / start_len)
+    stretched_vec = torch.empty(length)
+    for i in range(start_len):
+        val = vector[i]
+        for j in range(mult):
+            stretched_vec[i * mult + j] = val
+    return stretched_vec
