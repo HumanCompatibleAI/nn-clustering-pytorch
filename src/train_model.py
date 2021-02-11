@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,8 +13,10 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from graph_utils import get_graph_weights_from_live_net
-from utils import get_weighty_modules_from_live_net
+from utils import (
+    get_graph_weights_from_live_net,
+    get_weighty_modules_from_live_net,
+)
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -20,6 +24,9 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 
 # probably should define a global variable for the list of datasets.
 # maybe in a utils file or something.
+
+# TODO: have a function that tells you the dimensions of the stuff in your
+# dataset
 
 
 @train_exp.config
@@ -109,6 +116,40 @@ class MyMLP(nn.Module):
         return x
 
 
+# TODO: pass in layer widths etc.
+# also TODO: make deeper
+class MyCNN(nn.Module):
+    """
+    A simple CNN, taken from the KMNIST benchmark:
+    https://github.com/rois-codh/kmnist/blob/master/benchmarks/kuzushiji_mnist_cnn.py
+    """
+    def __init__(self):
+        super(MyCNN, self).__init__()
+        self.hidden1 = 32
+        self.hidden2 = 64
+        self.hidden3 = 128
+        self.conv1 = nn.Conv2d(1, self.hidden1, 3)
+        self.conv2 = nn.Conv2d(self.hidden1, self.hidden2, 3)
+        self.maxPool = nn.MaxPool2d(2, 2)
+        self.drop1 = nn.Dropout(p=0.25)
+        self.fc1 = nn.Linear(self.hidden2 * 12 * 12, self.hidden3)
+        self.drop2 = nn.Dropout(p=0.50)
+        self.fc2 = nn.Linear(self.hidden3, 10)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.drop1(self.maxPool(x))
+        x = x.view(-1, self.num_flat_features(x))
+        x = self.drop2(F.relu(self.fc1(x)))
+        x = self.fc2(x)
+        return x
+
+    def num_flat_features(self, x):
+        size = x.size()[1:]
+        return math.prod(size)
+
+
 def get_prunable_params(network):
     """
     Get the parameters of a network to prune.
@@ -117,7 +158,8 @@ def get_prunable_params(network):
     """
     prune_params_list = []
     for name, module in network.named_modules():
-        if isinstance(module, nn.Linear):
+        # in future, might have to have a list of modules that are prunable
+        if isinstance(module, nn.Linear) or isinstance(module, nn.Conv2d):
             prune_params_list.append((module, 'weight'))
     return prune_params_list
 
@@ -393,7 +435,8 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
-    my_net = MyMLP()
+    # my_net = MyMLP()
+    my_net = MyCNN()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
     save_path_prefix = model_dir + dataset
