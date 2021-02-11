@@ -87,7 +87,7 @@ def get_graph_weights_from_state_dict(state_dict, net_type):
                 weights.append(state_dict[string])
     elif net_type == 'cnn':
         # TODO: deal with case where you have linear layers before conv layers
-        for (i, string) in state_dict:
+        for (i, string) in enumerate(state_dict):
             if i == 0:
                 # don't include the inputs as part of the graph in conv nets
                 continue
@@ -97,17 +97,18 @@ def get_graph_weights_from_state_dict(state_dict, net_type):
     return weights
 
 
-def load_model_weights_pytorch(model_path, pytorch_device):
+def load_model_weights_pytorch(model_path, net_type, pytorch_device):
     """
     Take a pytorch saved model state dict, and return an array of the weight
     tensors as numpy arrays
     NB: this relies on the dict being ordered in the right order.
     model_path: a string, pointing to a pytorch saved state_dict
+    net_type: string indicating whether the model is an MLP or a CNN
     pytorch_device: pytorch device, which device to save the model to
     returns: array of numpy arrays of weight tensors (no biases)
     """
     state_dict = torch.load(model_path, map_location=pytorch_device)
-    torch_weights = get_graph_weights_from_state_dict(state_dict)
+    torch_weights = get_graph_weights_from_state_dict(state_dict, net_type)
     np_weights = [tens.detach().cpu().numpy() for tens in torch_weights]
     return np_weights
 
