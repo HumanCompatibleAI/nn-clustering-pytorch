@@ -7,7 +7,7 @@ from pathos.multiprocessing import ProcessPool
 from scipy.sparse.linalg import eigsh
 from torch.autograd import Function
 
-from utils import (
+from graph_utils import (
     delete_isolated_ccs,
     invert_deleted_neurons_np,
     weights_to_graph,

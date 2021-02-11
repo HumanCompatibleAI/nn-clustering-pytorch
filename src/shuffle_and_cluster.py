@@ -9,16 +9,15 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
+from graph_utils import delete_isolated_ccs, weights_to_graph
 from spectral_cluster_model import (
     adj_mat_to_clustering_and_quality,
     weights_array_to_clustering_and_quality,
 )
 from utils import (
     compute_percentile,
-    delete_isolated_ccs,
     get_random_int_time,
     load_model_weights_pytorch,
-    weights_to_graph,
 )
 
 shuffle_and_clust = Experiment('shuffle_and_clust')

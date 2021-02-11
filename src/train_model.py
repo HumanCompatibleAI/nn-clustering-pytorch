@@ -11,10 +11,8 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from utils import (
-    get_graph_weights_from_live_net,
-    get_weighty_modules_from_live_net,
-)
+from graph_utils import get_graph_weights_from_live_net
+from utils import get_weighty_modules_from_live_net
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
