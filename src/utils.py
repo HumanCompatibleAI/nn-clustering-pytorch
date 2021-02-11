@@ -4,6 +4,8 @@ import time
 import numpy as np
 import torch
 
+net_types = ['mlp', 'cnn']
+
 
 def get_random_int_time():
     """
@@ -29,43 +31,69 @@ def get_weighty_modules_from_live_net(network):
     returns: a list of nn.Modules
     """
     weighty_modules = []
+    weighty_module_types = [torch.nn.Linear, torch.nn.Conv2d]
     for module in network.modules():
-        if isinstance(module, torch.nn.Linear):
+        if any([isinstance(module, t) for t in weighty_module_types]):
             weighty_modules.append(module)
     return weighty_modules
 
 
-def get_graph_weights_from_live_net(network):
+def get_graph_weights_from_live_net(network, net_type):
     """
     Takes a neural network, and gets weights from it to use to turn it into a
     graph.
-    NB: requires things to only have linear layers
-    network: a neural network, currently an MLP. Probably has to inherit from
-             nn.Module
+    NB: for conv net, assumes all conv layers are contiguous.
+    network: a neural network. Has to inherit from nn.Module.
+    net_type: string indicating whether the net is an MLP or a CNN
     returns: a list of pytorch tensors.
     """
+    assert net_type in net_types
     weight_tensors = []
-    for module in network.modules():
-        if isinstance(module, torch.nn.Linear):
-            weight_tensors.append(module.weight)
+    if net_type == 'mlp':
+        for module in network.modules():
+            if isinstance(module, torch.nn.Linear):
+                weight_tensors.append(module.weight)
+    elif net_type == 'cnn':
+        # TODO: deal with case where you have linear layers before conv layers
+        for i, module in enumerate(network.modules()):
+            if i == 0:
+                # we don't have the inputs as part of the graph in convnets
+                continue
+            elif isinstance(module, torch.nn.Conv2d):
+                # we only include convolutional layers
+                weight_tensors.append(module.weight)
     return weight_tensors
 
 
-def get_graph_weights_from_state_dict(state_dict):
+def get_graph_weights_from_state_dict(state_dict, net_type):
     """
     Takes a pytorch state dict, and returns an array of the weight tensors that
     constitute the graph we're working with.
     NB: relies on the dict having the expected order.
     NB: also relies on the network not being actively pruned
+    NB: also relies on all conv layers being contiguous and having names
+        starting with 'conv'
     NB: might break once batch norm happens
     state_dict: a pytorch state dict
+    net_type: string indicating whether the net is an MLP or a CNN
     returns: an array of pytorch tensors
     """
+    assert net_type in net_types
     assert isinstance(state_dict, collections.OrderedDict)
     weights = []
-    for string in state_dict:
-        if string.endswith("weight"):
-            weights.append(state_dict[string])
+    if net_type == 'mlp':
+        for string in state_dict:
+            if string.endswith("weight"):
+                weights.append(state_dict[string])
+    elif net_type == 'cnn':
+        # TODO: deal with case where you have linear layers before conv layers
+        for (i, string) in state_dict:
+            if i == 0:
+                # don't include the inputs as part of the graph in conv nets
+                continue
+            elif string.startswith("conv") and string.endswith("weight"):
+                # add weights of conv layers
+                weights.append(state_dict[string])
     return weights
 
 

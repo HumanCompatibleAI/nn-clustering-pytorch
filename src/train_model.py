@@ -128,6 +128,7 @@ class MyCNN(nn.Module):
         self.hidden1 = 32
         self.hidden2 = 64
         self.hidden3 = 128
+        # NOTE: conv layers MUST have names starting with 'conv'
         self.conv1 = nn.Conv2d(1, self.hidden1, 3)
         self.conv2 = nn.Conv2d(self.hidden1, self.hidden2, 3)
         self.maxPool = nn.MaxPool2d(2, 2)
