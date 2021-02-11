@@ -112,7 +112,11 @@ def weights_to_graph(weights_array):
     # For everything in the weights array, add a row to block_mat of the form
     # [None, None, ..., sparsify(np.abs(mat)), None, ..., None]
     for (i, mat) in enumerate(weights_array):
-        sp_mat = sparse.coo_matrix(np.abs(mat))
+        abs_mat = np.abs(mat)
+        if len(abs_mat.shape) == 4:
+            # take L1 norm of spatial conv filters
+            abs_mat = np.sum(abs_mat, axis=(2, 3))
+        sp_mat = sparse.coo_matrix(abs_mat)
         if i != len(weights_array) - 1:
             block_row = [None] * (len(weights_array) + 1)
         else:
