@@ -32,7 +32,7 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 @train_exp.config
 def basic_config():
     batch_size = 128
-    num_epochs = 5
+    num_epochs = 3
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -40,7 +40,7 @@ def basic_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 2,
+        'num pruning epochs': 1,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
@@ -128,19 +128,22 @@ class MyCNN(nn.Module):
         self.hidden1 = 32
         self.hidden2 = 64
         self.hidden3 = 128
+        self.hidden4 = 256
         # NOTE: conv layers MUST have names starting with 'conv'
         self.conv1 = nn.Conv2d(1, self.hidden1, 3)
         self.conv2 = nn.Conv2d(self.hidden1, self.hidden2, 3)
         self.maxPool = nn.MaxPool2d(2, 2)
         self.drop1 = nn.Dropout(p=0.25)
-        self.fc1 = nn.Linear(self.hidden2 * 12 * 12, self.hidden3)
+        self.conv3 = nn.Conv2d(self.hidden2, self.hidden3, 3)
+        self.fc1 = nn.Linear(self.hidden3 * 10 * 10, self.hidden4)
         self.drop2 = nn.Dropout(p=0.50)
-        self.fc2 = nn.Linear(self.hidden3, 10)
+        self.fc2 = nn.Linear(self.hidden4, 10)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = self.drop1(self.maxPool(x))
+        x = F.relu(self.conv3(x))
         x = x.view(-1, self.num_flat_features(x))
         x = self.drop2(F.relu(self.fc1(x)))
         x = self.fc2(x)
@@ -431,6 +434,7 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     # TODO: come up with better way of generating save_path_prefix
     # or add info as required
     # probably partly do in config
+    # one thing to include is model type
     test_acc, test_loss, loss_list = train_and_save(
         my_net, train_loader, test_loader, num_epochs, pruning_config,
         cluster_gradient, cluster_gradient_config, optimizer, criterion,
