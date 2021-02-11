@@ -435,8 +435,7 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
-    # my_net = MyMLP()
-    my_net = MyCNN()
+    my_net = MyMLP()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
     save_path_prefix = model_dir + dataset
