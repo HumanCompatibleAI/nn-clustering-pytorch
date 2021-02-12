@@ -18,7 +18,7 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 @clust_exp.config
 def basic_config():
     num_clusters = 4
-    weights_path = "./models/kmnist.pth"
+    weights_path = "./models/mlp_kmnist.pth"
     net_type = 'mlp'
     epsilon = 1e-9
     eigen_solver = 'arpack'
@@ -113,8 +113,9 @@ def weights_array_to_clustering_and_quality(weights_array, num_clusters,
     adj_mat = weights_to_graph(weights_array)
     weights_array_, adj_mat_, _, _ = delete_isolated_ccs(
         weights_array, adj_mat)
-    return adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
-                                             eigen_solver, epsilon)
+    result = adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
+                                               eigen_solver, epsilon)
+    return result
 
 
 @clust_exp.automain

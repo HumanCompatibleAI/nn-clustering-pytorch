@@ -32,7 +32,6 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 
 @train_exp.config
 def mlp_config():
-    # TODO: split into MLP and CNN configs
     batch_size = 128
     num_epochs = 3
     log_interval = 100
@@ -52,7 +51,7 @@ def mlp_config():
         'num_workers': 2,
         'num_eigs': 3,
         'lambda': 1,
-        'frequency': 5
+        'frequency': 20
     }
     _ = locals()
     del _
@@ -164,7 +163,7 @@ class MyCNN(nn.Module):
         return math.prod(size)
 
 
-def calculate_clust_reg(cluster_gradient_config, network):
+def calculate_clust_reg(cluster_gradient_config, net_type, network):
     """
     Calculate the clusterability regularization term of a network.
     cluster_gradient_config: dict containing 'num_eigs', the int number of
@@ -174,18 +173,17 @@ def calculate_clust_reg(cluster_gradient_config, network):
                              strength to use per eigenvalue, and 'frequency',
                              the number of iterations between successive
                              applications of the term.
+    net_type: string indicating whether the network is an MLP or a CNN
     network: a pytorch network.
     returns: a tensor float.
     """
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
-    frequency = cluster_gradient_config['frequency']
-    weight_mats = get_graph_weights_from_live_net(network)
-    # TODO: above line won't work once we start using conv nets
+    weight_mats = get_graph_weights_from_live_net(network, net_type)
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
-    return (cg_lambda / num_eigs) * frequency * eig_sum
+    return (cg_lambda / num_eigs) * eig_sum
 
 
 def normalize_weights(network, eps=1e-3):
@@ -270,7 +268,7 @@ def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
     return sparsity_factor
 
 
-def train_and_save(network, train_loader, test_loader, num_epochs,
+def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                    pruning_config, cluster_gradient, cluster_gradient_config,
                    optimizer, criterion, log_interval, device,
                    model_path_prefix, _run):
@@ -278,6 +276,7 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     Train a neural network, printing out log information, and saving along the
     way.
     network: an instantiated object that inherits from nn.Module or something.
+    net_type: string indicating whether the net is an MLP or a CNN
     train_loader: pytorch loader for the training dataset
     test_loader: pytorch loader for the testing dataset
     num_epochs: int for the total number of epochs to train for (including any
@@ -340,8 +339,9 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                 if i % cluster_gradient_config['frequency'] == 0:
                     normalize_weights(network)
                     clust_reg_term = calculate_clust_reg(
-                        cluster_gradient_config, network)
-                    loss += clust_reg_term
+                        cluster_gradient_config, net_type, network)
+                    loss += (clust_reg_term *
+                             cluster_gradient_config['frequency'])
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -446,19 +446,17 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
-    # my_net = MyMLP()
-    my_net = MyCNN()
-    # TODO: use net_type to choose net
+    my_net = MyMLP() if net_type == 'mlp' else MyCNN()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
-    save_path_prefix = model_dir + net_type + dataset
+    save_path_prefix = model_dir + net_type + '_' + dataset
     # TODO: come up with better way of generating save_path_prefix
     # or add info as required
     # probably partly do in config
     test_acc, test_loss, loss_list = train_and_save(
-        my_net, train_loader, test_loader, num_epochs, pruning_config,
-        cluster_gradient, cluster_gradient_config, optimizer, criterion,
-        log_interval, device, save_path_prefix, _run)
+        my_net, net_type, train_loader, test_loader, num_epochs,
+        pruning_config, cluster_gradient, cluster_gradient_config, optimizer,
+        criterion, log_interval, device, save_path_prefix, _run)
     return {
         'test acc': test_acc,
         'test loss': test_loss,

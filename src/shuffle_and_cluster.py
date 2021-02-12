@@ -27,14 +27,13 @@ shuffle_and_clust.observers.append(FileStorageObserver('shuffle_clust_runs'))
 
 @shuffle_and_clust.config
 def basic_config():
-    # TODO: split this and all other configs into MLP + CNN configs
     num_clusters = 4
-    weights_path = "./models/kmnist.pth"
+    weights_path = "./models/mlp_kmnist.pth"
     net_type = 'mlp'
     shuffle_method = "all"
     epsilon = 1e-9
     num_samples = 100
-    num_workers = 4
+    num_workers = 6
     eigen_solver = 'arpack'
     _ = locals()
     del _
