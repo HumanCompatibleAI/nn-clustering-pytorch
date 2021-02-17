@@ -7,11 +7,8 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
-from utils import (
-    delete_isolated_ccs,
-    load_model_weights_pytorch,
-    weights_to_graph,
-)
+from graph_utils import delete_isolated_ccs, weights_to_graph
+from utils import load_model_weights_pytorch
 
 # TODO: extend to CNNs etc.
 
