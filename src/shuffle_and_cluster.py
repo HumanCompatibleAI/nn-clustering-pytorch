@@ -59,7 +59,7 @@ def shuffle_weight_tensor_nonzero(weight_tensor):
     tensor_shape = weight_tensor.shape
     flat_tensor = weight_tensor.flatten()
     nonzero_indices = np.nonzero(flat_tensor)[0]
-    perm = np.rando.permutation(len(nonzero_indices))
+    perm = np.random.permutation(len(nonzero_indices))
     permuted_flat_tensor = np.zeros_like(flat_tensor)
     permuted_flat_tensor[nonzero_indices] = flat_tensor[nonzero_indices[perm]]
     return np.reshape(permuted_flat_tensor, tensor_shape)
