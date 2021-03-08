@@ -28,7 +28,7 @@ shuffle_and_clust.observers.append(FileStorageObserver('shuffle_clust_runs'))
 @shuffle_and_clust.config
 def basic_config():
     num_clusters = 4
-    weights_path = "./models/kmnist.pth"
+    weights_path = "./models/mlp_kmnist.pth"
     shuffle_method = "all"
     epsilon = 1e-9
     num_samples = 10
