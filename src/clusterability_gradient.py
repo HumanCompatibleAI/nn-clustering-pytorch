@@ -13,8 +13,6 @@ from graph_utils import (
     weights_to_graph,
 )
 
-# TODO: make this work beautifully with CNNs
-
 
 def adj_to_laplacian_and_degs(adj_mat_csr):
     """
