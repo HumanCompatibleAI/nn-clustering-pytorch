@@ -16,6 +16,7 @@ from clusterability_gradient import LaplacianEigenvalues
 from utils import (
     get_graph_weights_from_live_net,
     get_weighty_modules_from_live_net,
+    vector_stretch,
 )
 
 train_exp = Experiment('train_model')
@@ -30,17 +31,18 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 
 
 @train_exp.config
-def basic_config():
+def mlp_config():
     batch_size = 128
-    num_epochs = 5
+    num_epochs = 3
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
+    net_type = 'mlp'
     # pruning will be as described in Zhu and Gupta 2017, arXiv:1710.01878
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 2,
+        'num pruning epochs': 1,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
@@ -49,8 +51,15 @@ def basic_config():
         'num_workers': 2,
         'num_eigs': 3,
         'lambda': 1,
-        'frequency': 5
+        'frequency': 20
     }
+    _ = locals()
+    del _
+
+
+@train_exp.named_config
+def cnn_config():
+    net_type = 'cnn'
     _ = locals()
     del _
 
@@ -128,18 +137,22 @@ class MyCNN(nn.Module):
         self.hidden1 = 32
         self.hidden2 = 64
         self.hidden3 = 128
+        self.hidden4 = 256
+        # NOTE: conv layers MUST have names starting with 'conv'
         self.conv1 = nn.Conv2d(1, self.hidden1, 3)
         self.conv2 = nn.Conv2d(self.hidden1, self.hidden2, 3)
         self.maxPool = nn.MaxPool2d(2, 2)
         self.drop1 = nn.Dropout(p=0.25)
-        self.fc1 = nn.Linear(self.hidden2 * 12 * 12, self.hidden3)
+        self.conv3 = nn.Conv2d(self.hidden2, self.hidden3, 3)
+        self.fc1 = nn.Linear(self.hidden3 * 10 * 10, self.hidden4)
         self.drop2 = nn.Dropout(p=0.50)
-        self.fc2 = nn.Linear(self.hidden3, 10)
+        self.fc2 = nn.Linear(self.hidden4, 10)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = self.drop1(self.maxPool(x))
+        x = F.relu(self.conv3(x))
         x = x.view(-1, self.num_flat_features(x))
         x = self.drop2(F.relu(self.fc1(x)))
         x = self.fc2(x)
@@ -150,21 +163,7 @@ class MyCNN(nn.Module):
         return math.prod(size)
 
 
-def get_prunable_params(network):
-    """
-    Get the parameters of a network to prune.
-    network: some object that is of class nn.Module or something.
-    Returns: a list of tensors to prune.
-    """
-    prune_params_list = []
-    for name, module in network.named_modules():
-        # in future, might have to have a list of modules that are prunable
-        if isinstance(module, nn.Linear) or isinstance(module, nn.Conv2d):
-            prune_params_list.append((module, 'weight'))
-    return prune_params_list
-
-
-def calculate_clust_reg(cluster_gradient_config, network):
+def calculate_clust_reg(cluster_gradient_config, net_type, network):
     """
     Calculate the clusterability regularization term of a network.
     cluster_gradient_config: dict containing 'num_eigs', the int number of
@@ -174,18 +173,17 @@ def calculate_clust_reg(cluster_gradient_config, network):
                              strength to use per eigenvalue, and 'frequency',
                              the number of iterations between successive
                              applications of the term.
+    net_type: string indicating whether the network is an MLP or a CNN
     network: a pytorch network.
     returns: a tensor float.
     """
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
-    frequency = cluster_gradient_config['frequency']
-    weight_mats = get_graph_weights_from_live_net(network)
-    # TODO: above line won't work once we start using conv nets
+    weight_mats = get_graph_weights_from_live_net(network, net_type)
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
-    return (cg_lambda / num_eigs) * frequency * eig_sum
+    return (cg_lambda / num_eigs) * eig_sum
 
 
 def normalize_weights(network, eps=1e-3):
@@ -204,15 +202,23 @@ def normalize_weights(network, eps=1e-3):
         incoming_biases = layers[idx].bias
         outgoing_weights = layers[idx + 1].weight
         num_neurons = incoming_weights.shape[0]
-        assert num_neurons == outgoing_weights.shape[1]
+        assert outgoing_weights.shape[1] % num_neurons == 0
         assert num_neurons == incoming_biases.shape[0]
 
         unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
-        all_inc_weights = torch.cat((incoming_weights, unsqueezed_bias), 1)
+        flat_weights = torch.flatten(incoming_weights, start_dim=1)
+        all_inc_weights = torch.cat((flat_weights, unsqueezed_bias), 1)
         scales = torch.linalg.norm(all_inc_weights, dim=1)
         scales /= np.sqrt(2.)
         scales += eps
         scales_rows = torch.unsqueeze(scales, 1)
+        for i in range(len(incoming_weights.shape)):
+            if i > 1:
+                scales_rows = torch.unsqueeze(scales_rows, i)
+        scales_mul = vector_stretch(scales, outgoing_weights.shape[1])
+        for i in range(len(outgoing_weights.shape) - 1):
+            if i > 0:
+                scales_mul = torch.unsqueeze(scales_mul, i)
 
         incoming_weights_unpruned = True
         incoming_biases_unpruned = True
@@ -226,14 +232,15 @@ def normalize_weights(network, eps=1e-3):
                 incoming_biases_unpruned = False
         for name, param in layers[idx + 1].named_parameters():
             if name == 'weight_orig':
-                param.data = torch.mul(param, scales)
+                param.data = torch.mul(param, scales_mul)
                 outgoing_weights_unpruned = False
         if incoming_weights_unpruned:
             layers[idx].weight.data = torch.div(incoming_weights, scales_rows)
         if incoming_biases_unpruned:
             layers[idx].bias.data = torch.div(incoming_biases, scales)
         if outgoing_weights_unpruned:
-            layers[idx + 1].weight.data = torch.mul(outgoing_weights, scales)
+            layers[idx + 1].weight.data = torch.mul(outgoing_weights,
+                                                    scales_mul)
 
 
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
@@ -261,7 +268,7 @@ def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
     return sparsity_factor
 
 
-def train_and_save(network, train_loader, test_loader, num_epochs,
+def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                    pruning_config, cluster_gradient, cluster_gradient_config,
                    optimizer, criterion, log_interval, device,
                    model_path_prefix, _run):
@@ -269,6 +276,7 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
     Train a neural network, printing out log information, and saving along the
     way.
     network: an instantiated object that inherits from nn.Module or something.
+    net_type: string indicating whether the net is an MLP or a CNN
     train_loader: pytorch loader for the training dataset
     test_loader: pytorch loader for the testing dataset
     num_epochs: int for the total number of epochs to train for (including any
@@ -315,7 +323,8 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
         num_prunes_so_far = 0
         train_step_counter = 0
 
-    prune_params_list = get_prunable_params(network)
+    prune_modules_list = get_weighty_modules_from_live_net(network)
+    prune_params_list = [(mod, 'weight') for mod in prune_modules_list]
 
     for epoch in range(num_epochs):
         print("Start of epoch", epoch)
@@ -330,8 +339,9 @@ def train_and_save(network, train_loader, test_loader, num_epochs,
                 if i % cluster_gradient_config['frequency'] == 0:
                     normalize_weights(network)
                     clust_reg_term = calculate_clust_reg(
-                        cluster_gradient_config, network)
-                    loss += clust_reg_term
+                        cluster_gradient_config, net_type, network)
+                    loss += (clust_reg_term *
+                             cluster_gradient_config['frequency'])
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -406,12 +416,13 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 
 @train_exp.automain
-def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
-                 pruning_config, cluster_gradient, cluster_gradient_config,
-                 _run):
+def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
+                 model_dir, pruning_config, cluster_gradient,
+                 cluster_gradient_config, _run):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
+    net_type: string indicating whether the model is an MLP or a CNN
     num_epochs: int
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
@@ -435,17 +446,17 @@ def run_training(dataset, num_epochs, batch_size, log_interval, model_dir,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
-    my_net = MyMLP()
+    my_net = MyMLP() if net_type == 'mlp' else MyCNN()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
-    save_path_prefix = model_dir + dataset
+    save_path_prefix = model_dir + net_type + '_' + dataset
     # TODO: come up with better way of generating save_path_prefix
     # or add info as required
     # probably partly do in config
     test_acc, test_loss, loss_list = train_and_save(
-        my_net, train_loader, test_loader, num_epochs, pruning_config,
-        cluster_gradient, cluster_gradient_config, optimizer, criterion,
-        log_interval, device, save_path_prefix, _run)
+        my_net, net_type, train_loader, test_loader, num_epochs,
+        pruning_config, cluster_gradient, cluster_gradient_config, optimizer,
+        criterion, log_interval, device, save_path_prefix, _run)
     return {
         'test acc': test_acc,
         'test loss': test_loss,

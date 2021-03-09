@@ -62,6 +62,9 @@ def get_neuron_contribs_dy_dW(layer, mat_list, degree_list, widths, pre_sums,
         # Contribution from neurons that feed to m:
         if layer != 0:
             abs_weights_to = np.abs(mat_list[layer - 1][m, :])
+            # sum over any spatial dimensions of conv filters
+            if len(abs_weights_to.shape) == 3:
+                abs_weights_to = np.sum(abs_weights_to, axis=(1, 2))
             degrees_prev_layer = degree_list[pre_sums[layer -
                                                       1]:pre_sums[layer]]**(
                                                           -0.5)
@@ -71,6 +74,9 @@ def get_neuron_contribs_dy_dW(layer, mat_list, degree_list, widths, pre_sums,
         # Contribution from neurons that m feeds to:
         if layer + 2 < len(pre_sums):
             abs_weights_from = np.abs(mat_list[layer][:, m])
+            # sum over any spatial dimensions of conv filters
+            if len(abs_weights_from.shape) == 3:
+                abs_weights_from = np.sum(abs_weights_from, axis=(1, 2))
             degrees_next_layer = degree_list[pre_sums[layer +
                                                       1]:pre_sums[layer +
                                                                   2]]**(-0.5)
@@ -114,6 +120,7 @@ def get_dy_dW_single(layer, mat, neuron_contribs, degree_list, pre_sums,
                           dy_dL[e_m, e_n])
         # remember: in pytorch, 0 index is outputs, 1 index is inputs
         grad[n, m] = gradient_term
+        # for conv layers, this assigns to every filter element.
     grad = np.multiply(grad, np.sign(mat))
     return grad.astype(np.float32)
 
@@ -167,8 +174,6 @@ class LaplacianEigenvalues(Function):
     """
     A torch autograd Function that takes the eigenvalues of the normalized
     Laplacian of a neural network.
-    Sam Toyer helped me figure out how to pack in and out the lists of tensors
-    into ctx (altho he is obviously not responsible for any bugs in this code)
     """
     @staticmethod
     def forward(ctx, num_workers, num_eigs, *args):
