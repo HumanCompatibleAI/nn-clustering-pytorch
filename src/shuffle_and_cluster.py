@@ -1,10 +1,7 @@
 # Based on code written by Shlomi Hod, Stephen Casper, and Daniel Filan
 
-import copy
-
 import numpy as np
 import torch
-from pathos.multiprocessing import ProcessPool
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
@@ -33,7 +30,6 @@ def basic_config():
     shuffle_method = "all"
     epsilon = 1e-9
     num_samples = 100
-    num_workers = 6
     eigen_solver = 'arpack'
     _ = locals()
     del _
@@ -104,7 +100,7 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
 
 @shuffle_and_clust.automain
 def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
-                   num_samples, num_workers, shuffle_method):
+                   num_samples, shuffle_method):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
@@ -116,7 +112,6 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
                   clustering
     epsilon: small positive number to stop us dividing by zero
     num_samples: how many shuffles to compare against
-    num_workers: how many CPUs to compute shuffle n-cuts on
     shuffle_method: string indicating how to shuffle the network
     returns: dict containing 'true n-cut', a float, 'num samples', an int,
              'mean', a float representing the mean shuffled n-cut,
@@ -135,24 +130,11 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
                                                        adj_mat_)
     true_n_cut, _ = adj_mat_to_clustering_and_quality(adj_mat, num_clusters,
                                                       eigen_solver, epsilon)
-
-    samples_per_worker = num_samples // num_workers
-    shuffle_cluster_arg_det = (samples_per_worker, weights_array, num_clusters,
-                               eigen_solver, epsilon, shuffle_method)
     time_int = get_random_int_time()
-    if num_workers == 1:
-        args = shuffle_cluster_arg_det + (time_int, )
-        shuffled_n_cuts = shuffle_and_cluster(*args)
-    else:
-        worker_det_args = [[copy.deepcopy(arg) for _ in range(num_workers)]
-                           for arg in shuffle_cluster_arg_det]
-        seed_args = [time_int + i for i in range(num_workers)]
-        worker_args = worker_det_args + [seed_args]
-        with ProcessPool(nodes=num_workers) as p:
-            parallel_shuffled_n_cuts = p.map(shuffle_and_cluster, *worker_args)
-        shuffled_n_cuts = np.concatenate(parallel_shuffled_n_cuts)
+    shuffled_n_cuts = shuffle_and_cluster(num_samples, weights_array,
+                                          num_clusters, eigen_solver, epsilon,
+                                          shuffle_method, time_int)
 
-    num_samples = len(shuffled_n_cuts)
     shuff_mean = np.mean(shuffled_n_cuts)
     shuff_stdev = np.std(shuffled_n_cuts)
     n_cut_percentile = compute_percentile(true_n_cut, shuffled_n_cuts)
