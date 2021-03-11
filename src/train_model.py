@@ -53,6 +53,9 @@ def mlp_config():
         'lambda': 1,
         'frequency': 20
     }
+    save_path_prefix = (model_dir + net_type + '_' + dataset +
+                        cluster_gradient * '_clust-grad')
+    # TODO: figure out what info should go in here.
     _ = locals()
     del _
 
@@ -417,8 +420,8 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 @train_exp.automain
 def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
-                 model_dir, pruning_config, cluster_gradient,
-                 cluster_gradient_config, _run):
+                 pruning_config, cluster_gradient, cluster_gradient_config,
+                 save_path_prefix, _run):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
@@ -426,7 +429,6 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
     num_epochs: int
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
-    model_dir: string. relative path to directory where model should be saved
     pruning_config: dict containing 'exponent', a numeric type, 'frequency',
                     int representing the number of training steps to have
                     between prunes, 'num pruning epochs', int representing the
@@ -442,6 +444,8 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
                              the number of iterations between successive
                              applications of the term. Only accessed if
                              cluster_gradient is True.
+    save_path_prefix: string that acts as a prefix for the path where models
+                      will be saved to.
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
@@ -449,10 +453,6 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
     my_net = MyMLP() if net_type == 'mlp' else MyCNN()
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
-    save_path_prefix = model_dir + net_type + '_' + dataset
-    # TODO: come up with better way of generating save_path_prefix
-    # or add info as required
-    # probably partly do in config
     test_acc, test_loss, loss_list = train_and_save(
         my_net, net_type, train_loader, test_loader, num_epochs,
         pruning_config, cluster_gradient, cluster_gradient_config, optimizer,
