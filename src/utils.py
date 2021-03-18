@@ -4,8 +4,6 @@ import time
 import numpy as np
 import torch
 
-net_types = ['mlp', 'cnn']
-
 
 def get_random_int_time():
     """
@@ -22,49 +20,47 @@ def compute_percentile(x, arr):
     return r / n
 
 
-def get_weighty_modules_from_live_net(network):
-    """
-    Takes a neural network, and returns the modules from it that have proper
-    weight tensors (i.e. not including batchnorm modules)
-    network: a neural network, that has to inherit from nn.Module
-    returns: a list of nn.Modules
-    """
-    weighty_modules = []
-    weighty_module_types = [torch.nn.Linear, torch.nn.Conv2d]
-    for module in network.modules():
-        if any([isinstance(module, t) for t in weighty_module_types]):
-            weighty_modules.append(module)
-    return weighty_modules
+# def get_weighty_modules_from_live_net(network):
+#     """
+#     Takes a neural network, and returns the modules from it that have proper
+#     weight tensors (i.e. not including batchnorm modules)
+#     network: a neural network, that has to inherit from nn.Module
+#     returns: a list of nn.Modules
+#     """
+#     weighty_modules = []
+#     weighty_module_types = [torch.nn.Linear, torch.nn.Conv2d]
+#     for module in network.modules():
+#         if any([isinstance(module, t) for t in weighty_module_types]):
+#             weighty_modules.append(module)
+#     return weighty_modules
 
 
-def get_graph_weights_from_live_net(network, net_type):
+def get_weight_modules_from_live_net(network):
     """
-    Takes a neural network, and gets weights from it to use to turn it into a
-    graph.
-    NB: for conv net, assumes all conv layers are contiguous.
+    Takes a neural network, and gets modules in it that contain relevant
+    weights.
     network: a neural network. Has to inherit from nn.Module.
-    net_type: string indicating whether the net is an MLP or a CNN
-    returns: a list of pytorch tensors.
+    returns: an array of dicts containing layer names and relevant pytorch
+             modules
     """
-    assert net_type in net_types
-    weight_tensors = []
-    if net_type == 'mlp':
-        for module in network.modules():
-            if isinstance(module, torch.nn.Linear):
-                weight_tensors.append(module.weight)
-    elif net_type == 'cnn':
-        # TODO: deal with case where you have linear layers before conv layers
-        for i, module in enumerate(network.modules()):
-            if i == 0:
-                # we don't have the inputs as part of the graph in convnets
-                continue
-            elif isinstance(module, torch.nn.Conv2d):
-                # we only include convolutional layers
-                weight_tensors.append(module.weight)
-    return weight_tensors
+    layer_array = []
+    for layer_name, layer_mod in network.named_children():
+        if isinstance(layer_mod, torch.nn.ModuleDict):
+            layer_dict = {'layer': layer_name}
+            for mod_name, module in layer_mod.named_children():
+                if mod_name == 'fc' and isinstance(module, torch.nn.Linear):
+                    layer_dict['fc_mod'] = module
+                if mod_name == 'conv' and isinstance(module, torch.nn.Conv2d):
+                    layer_dict['conv_mod'] = module
+                if (mod_name == 'bn'
+                        and (isinstance(module, torch.nn.BatchNorm2d)
+                             or isinstance(module, torch.nn.BatchNorm1d))):
+                    layer_dict['bn_mod'] = module
+            layer_array.append(layer_dict)
+    return layer_array
 
 
-def get_graph_weights_from_state_dict(state_dict):
+def get_weight_tensors_from_state_dict(state_dict):
     """
     Takes a pytorch state dict, and returns an array of the weight tensors that
     constitute the graph we're working with.
@@ -105,20 +101,23 @@ def get_graph_weights_from_state_dict(state_dict):
     return layer_array
 
 
-def load_model_weights_pytorch(model_path, net_type, pytorch_device):
+def load_model_weights_pytorch(model_path, pytorch_device):
     """
     Take a pytorch saved model state dict, and return an array of the weight
     tensors as numpy arrays
     NB: this relies on the dict being ordered in the right order.
     model_path: a string, pointing to a pytorch saved state_dict
-    net_type: string indicating whether the model is an MLP or a CNN
     pytorch_device: pytorch device, which device to save the model to
-    returns: array of numpy arrays of weight tensors (no biases)
+    returns: an array of dicts containing layer names and various numpy
+             tensors
     """
     state_dict = torch.load(model_path, map_location=pytorch_device)
-    torch_weights = get_graph_weights_from_state_dict(state_dict, net_type)
-    np_weights = [tens.detach().cpu().numpy() for tens in torch_weights]
-    return np_weights
+    layer_array = get_weight_tensors_from_state_dict(state_dict)
+    for layer_dict in layer_array:
+        for key, val in layer_dict.items():
+            if isinstance(val, torch.Tensor):
+                layer_dict[key] = val.detach().cpu().numpy()
+    return layer_array
 
 
 def weights_to_layer_widths(weights_array):
