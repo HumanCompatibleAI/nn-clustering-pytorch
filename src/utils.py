@@ -26,7 +26,6 @@ def get_weighty_modules_from_live_net(network):
     """
     Takes a neural network, and returns the modules from it that have proper
     weight tensors (i.e. not including batchnorm modules)
-    NB: so far, requires things to only have linear layers
     network: a neural network, that has to inherit from nn.Module
     returns: a list of nn.Modules
     """
@@ -65,36 +64,45 @@ def get_graph_weights_from_live_net(network, net_type):
     return weight_tensors
 
 
-def get_graph_weights_from_state_dict(state_dict, net_type):
+def get_graph_weights_from_state_dict(state_dict):
     """
     Takes a pytorch state dict, and returns an array of the weight tensors that
     constitute the graph we're working with.
     NB: relies on the dict having the expected order.
     NB: also relies on the network not being actively pruned
-    NB: also relies on all conv layers being contiguous and having names
-        starting with 'conv'
-    NB: might break once batch norm happens
+    NB: also relies on the network having the expected names and structure: see
+        README for details
+    NB: also relies on MLPs not using batch norm
     state_dict: a pytorch state dict
-    net_type: string indicating whether the net is an MLP or a CNN
-    returns: an array of pytorch tensors
+    returns: an array of dicts containing layer names and various pytorch
+             tensors
     """
-    assert net_type in net_types
     assert isinstance(state_dict, collections.OrderedDict)
-    weights = []
-    if net_type == 'mlp':
-        for string in state_dict:
-            if string.endswith("weight"):
-                weights.append(state_dict[string])
-    elif net_type == 'cnn':
-        # TODO: deal with case where you have linear layers before conv layers
-        for (i, string) in enumerate(state_dict):
-            if i == 0:
-                # don't include the inputs as part of the graph in conv nets
-                continue
-            elif string.startswith("conv") and string.endswith("weight"):
-                # add weights of conv layers
-                weights.append(state_dict[string])
-    return weights
+    layer_array = []
+    for name, tens in state_dict.items():
+        # these names look like layer4.fc.weight or layer1.bn.running_var
+        name_parts = name.split('.')
+        assert len(name_parts) == 3
+        new_layer_name = name_parts[0]
+        module_name = name_parts[1]
+        attr_name = name_parts[2]
+        old_layer = (bool(layer_array)
+                     and layer_array[-1]['layer'] == new_layer_name)
+        if module_name == "fc" and attr_name == "weight" and not old_layer:
+            layer_array.append({'layer': new_layer_name, 'fc_weights': tens})
+        if (module_name == "conv" and attr_name == "weight" and not old_layer):
+            layer_array.append({'layer': new_layer_name, 'conv_weights': tens})
+        if module_name == "bn" and old_layer:
+            if attr_name == "weight":
+                layer_array[-1]['bn_weights'] = tens
+            if attr_name == "running_var":
+                layer_array[-1]['bn_running_var'] = tens
+    layer_names = [x['layer'] for x in layer_array]
+    layer_name_problem = "Problem with layer names!"
+    for i in range(len(layer_names)):
+        for j in range(i + 1, len(layer_names)):
+            assert layer_names[i] != layer_names[j], layer_name_problem
+    return layer_array
 
 
 def load_model_weights_pytorch(model_path, net_type, pytorch_device):

@@ -111,20 +111,23 @@ class MyMLP(nn.Module):
     """
     def __init__(self):
         super(MyMLP, self).__init__()
+        # see README for why this is structured weirdly
         self.hidden1 = 512
         self.hidden2 = 512
         self.hidden3 = 512
-        self.fc1 = nn.Linear(28 * 28, self.hidden1)
-        self.fc2 = nn.Linear(self.hidden1, self.hidden2)
-        self.fc3 = nn.Linear(self.hidden2, self.hidden3)
-        self.fc4 = nn.Linear(self.hidden3, 10)
+        self.layer1 = nn.ModuleDict({"fc": nn.Linear(28 * 28, self.hidden1)})
+        self.layer2 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden1, self.hidden2)})
+        self.layer3 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden2, self.hidden3)})
+        self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, 10)})
 
     def forward(self, x):
         x = x.view(-1, 28 * 28)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        x = self.fc4(x)
+        x = F.relu(self.layer1["fc"](x))
+        x = F.relu(self.layer2["fc"](x))
+        x = F.relu(self.layer3["fc"](x))
+        x = self.layer4["fc"](x)
         return x
 
 
@@ -132,33 +135,47 @@ class MyMLP(nn.Module):
 # also TODO: make deeper
 class MyCNN(nn.Module):
     """
-    A simple CNN, taken from the KMNIST benchmark:
+    A simple CNN, modified from the KMNIST benchmark:
     https://github.com/rois-codh/kmnist/blob/master/benchmarks/kuzushiji_mnist_cnn.py
     """
     def __init__(self):
         super(MyCNN, self).__init__()
+        # see README for why this is structured weirdly
         self.hidden1 = 32
         self.hidden2 = 64
         self.hidden3 = 128
         self.hidden4 = 256
-        # NOTE: conv layers MUST have names starting with 'conv'
-        self.conv1 = nn.Conv2d(1, self.hidden1, 3)
-        self.conv2 = nn.Conv2d(self.hidden1, self.hidden2, 3)
-        self.maxPool = nn.MaxPool2d(2, 2)
-        self.drop1 = nn.Dropout(p=0.25)
-        self.conv3 = nn.Conv2d(self.hidden2, self.hidden3, 3)
-        self.fc1 = nn.Linear(self.hidden3 * 10 * 10, self.hidden4)
-        self.drop2 = nn.Dropout(p=0.50)
-        self.fc2 = nn.Linear(self.hidden4, 10)
+        self.layer1 = nn.ModuleDict({"conv": nn.Conv2d(1, self.hidden1, 3)})
+        self.layer2 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden1, self.hidden2, 3),
+            "maxPool":
+            nn.MaxPool2d(2, 2),
+            "drop":
+            nn.Dropout(p=0.25)
+        })
+        self.layer3 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden2, self.hidden3, 3),
+            "bn":
+            nn.BatchNorm2d(self.hidden3)
+        })
+        self.layer4 = nn.ModuleDict({
+            "fc":
+            nn.Linear(self.hidden3 * 10 * 10, self.hidden4),
+            "drop":
+            nn.Dropout(p=0.50)
+        })
+        self.layer5 = nn.ModuleDict({"fc": nn.Linear(self.hidden4, 10)})
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = self.drop1(self.maxPool(x))
-        x = F.relu(self.conv3(x))
+        x = F.relu(self.layer1["conv"](x))
+        x = F.relu(self.layer2["conv"](x))
+        x = self.layer2["drop"](self.layer2["maxPool"](x))
+        x = F.relu(self.layer3["bn"](self.layer3["conv"](x)))
         x = x.view(-1, self.num_flat_features(x))
-        x = self.drop2(F.relu(self.fc1(x)))
-        x = self.fc2(x)
+        x = self.layer4["drop"](F.relu(self.layer4["fc"](x)))
+        x = self.layer5["fc"](x)
         return x
 
     def num_flat_features(self, x):
@@ -271,6 +288,20 @@ def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,
     return sparsity_factor
 
 
+def get_prunable_modules(network):
+    """
+    Takes a neural network, and returns the modules from it that can be pruned.
+    network: a neural network, that has to inherit from nn.Module
+    returns: a list of nn.Modules
+    """
+    prunable_modules = []
+    prunable_module_types = [torch.nn.Linear, torch.nn.Conv2d]
+    for module in network.modules():
+        if any([isinstance(module, t) for t in prunable_module_types]):
+            prunable_modules.append(module)
+    return prunable_modules
+
+
 def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                    pruning_config, cluster_gradient, cluster_gradient_config,
                    optimizer, criterion, log_interval, device,
@@ -326,7 +357,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
         num_prunes_so_far = 0
         train_step_counter = 0
 
-    prune_modules_list = get_weighty_modules_from_live_net(network)
+    prune_modules_list = get_prunable_modules(network)
     prune_params_list = [(mod, 'weight') for mod in prune_modules_list]
 
     for epoch in range(num_epochs):
