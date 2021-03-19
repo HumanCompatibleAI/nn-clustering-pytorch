@@ -56,7 +56,9 @@ def get_weight_modules_from_live_net(network):
                         and (isinstance(module, torch.nn.BatchNorm2d)
                              or isinstance(module, torch.nn.BatchNorm1d))):
                     layer_dict['bn_mod'] = module
-            layer_array.append(layer_dict)
+            if len(layer_dict) > 1:
+                layer_array.append(layer_dict)
+    check_layer_names(layer_array)
     return layer_array
 
 
@@ -93,12 +95,16 @@ def get_weight_tensors_from_state_dict(state_dict):
                 layer_array[-1]['bn_weights'] = tens
             if attr_name == "running_var":
                 layer_array[-1]['bn_running_var'] = tens
+    check_layer_names(layer_array)
+    return layer_array
+
+
+def check_layer_names(layer_array):
     layer_names = [x['layer'] for x in layer_array]
     layer_name_problem = "Problem with layer names!"
     for i in range(len(layer_names)):
         for j in range(i + 1, len(layer_names)):
             assert layer_names[i] != layer_names[j], layer_name_problem
-    return layer_array
 
 
 def load_model_weights_pytorch(model_path, pytorch_device):
