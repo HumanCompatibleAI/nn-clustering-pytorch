@@ -8,7 +8,10 @@ Things this codebase can do:
 - Compare the clusterability of a model to that of random shuffles of the model's weights. This is done in `src/shuffle_and_cluster.py`.
 - Regularize graph-clusterability during training, while normalizing weights. This is done in `src/clusterability_gradient.py` and `src/train_model.py`.
 
-After cloning, enter the pipenv by running `pipenv shell`, install dependencies by running `pipenv install`, then install pre-commit hooks for `yapf`, `isort`, and `flake8` by running `pre-commit install`.
+After cloning, enter the pipenv by running `pipenv shell`. To install dependencies:
+
+- if you don't want to contribute to development, just run `pipenv install`.
+- if you do want to contribute to development, install dependencies by running `pipenv install -d`, then install pre-commit hooks for `yapf`, `isort`, and `flake8` by running `pre-commit install`.
 
 This codebase uses `sacred` extensively, which you can read about [here](https://sacred.readthedocs.io/en/stable/).
 

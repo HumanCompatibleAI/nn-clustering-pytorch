@@ -11,10 +11,11 @@ sacred = "*"
 scipy = "*"
 sklearn = "*"
 pathos = "*"
-pre-commit = "*"
 torchviz = "*"
+Pillow = ">=8.1.1"
 
 [dev-packages]
+pre-commit = "*"
 
 [requires]
 python_version = "3.8"
