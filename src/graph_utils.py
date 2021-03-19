@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 import scipy.sparse as sparse
 
@@ -133,3 +135,43 @@ def weights_to_graph(weights_array):
     low_tri = sparse.bmat(block_mat, 'csr')
     # add to transpose to get adjacency matrix
     return low_tri + low_tri.transpose()
+
+
+def np_layer_array_to_weights_array(np_layer_array, net_type, eps=1e-5):
+    """
+    Take in a layer array of numpy tensors, and return an array of 'weight
+    tensor' equivalents that can be turned into a graph. Basically, take the
+    part of the network you care to turn into a graph, get the weight tensors,
+    and absorb the batch norm parts.
+    np_layer_array: array of dicts containing layer names and np weight tensors
+    net_type: 'mlp' or 'cnn'
+    Returns: array of numpy tensors ready to be turned into a graph.
+    """
+    weights_array = []
+    assert net_type in ['mlp', 'cnn']
+    # take the first contiguous block of layers containing desired weight
+    # tensors
+    weight_name = 'fc_weights' if net_type == 'mlp' else 'conv_weights'
+
+    def has_weights(my_dict):
+        return weight_name in my_dict
+
+    for k, g in itertools.groupby(np_layer_array, has_weights):
+        if k:
+            weight_layers = list(g)
+            break
+    for layer_dict in weight_layers:
+        my_weights = layer_dict[weight_name]
+        if 'bn_weights' in layer_dict:
+            big_bn_weights = layer_dict['bn_weights']
+            for i in range(1, my_weights.ndim):
+                big_bn_weights = np.expand_dims(big_bn_weights, i)
+            my_weights = np.multiply(my_weights, big_bn_weights)
+        if 'bn_running_var' in layer_dict:
+            big_bn_var = layer_dict['bn_running_var']
+            for i in range(1, my_weights.ndim):
+                big_bn_var = np.expand_dims(big_bn_var, i)
+            div_by = np.sqrt(big_bn_var + eps)
+            my_weights = np.divide(my_weights, div_by)
+        weights_array.append(my_weights)
+    return weights_array
