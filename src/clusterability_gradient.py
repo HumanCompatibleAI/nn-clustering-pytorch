@@ -171,7 +171,8 @@ def get_dy_dW_np(degree_list, mat_list, dy_dL, num_workers=1):
 class LaplacianEigenvalues(Function):
     """
     A torch autograd Function that takes the eigenvalues of the normalized
-    Laplacian of a neural network.
+    Laplacian of a neural network. These essentially measure how clusterable
+    the network is.
     """
     @staticmethod
     def forward(ctx, num_workers, num_eigs, *args):
