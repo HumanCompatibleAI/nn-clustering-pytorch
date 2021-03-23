@@ -80,7 +80,7 @@ def get_weight_tensors_from_state_dict(state_dict):
     for name, tens in state_dict.items():
         # these names look like layer4.fc.weight or layer1.bn.running_var
         name_parts = name.split('.')
-        assert len(name_parts) == 3
+        assert len(name_parts) == 3, name
         new_layer_name = name_parts[0]
         module_name = name_parts[1]
         attr_name = name_parts[2]

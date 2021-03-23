@@ -7,7 +7,11 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
-from graph_utils import delete_isolated_ccs, weights_to_graph
+from graph_utils import (
+    delete_isolated_ccs,
+    np_layer_array_to_graph_weights_array,
+    weights_to_graph,
+)
 from utils import load_model_weights_pytorch
 
 clust_exp = Experiment('cluster_model')
@@ -98,18 +102,21 @@ def adj_mat_to_clustering_and_quality(adj_mat, num_clusters, eigen_solver,
     return (n_cut_val, clustering_labels)
 
 
-def weights_array_to_clustering_and_quality(weights_array, num_clusters,
-                                            eigen_solver, epsilon):
+def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
+                                          eigen_solver, epsilon):
     """
     Take an array of weight tensors, delete any isolated connected components,
     cluster the resulting graph, and get the n-cut and the clustering.
-    weights_array: array of numpy weight tensors
+    layer_array: array of dicts representing layers, containing layer names
+                 and numpy param tensors
     num_clusters: integer number of desired clusters
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
     epsilon: small positive number to stop us dividing by zero
     returns: tuple containing n-cut and array of cluster labels
     """
+    weights_array = np_layer_array_to_graph_weights_array(
+        layer_array, net_type)
     adj_mat = weights_to_graph(weights_array)
     weights_array_, adj_mat_, _, _ = delete_isolated_ccs(
         weights_array, adj_mat)
@@ -134,7 +141,7 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    weights_array_ = load_model_weights_pytorch(weights_path, net_type, device)
-    return weights_array_to_clustering_and_quality(weights_array_,
-                                                   num_clusters, eigen_solver,
-                                                   epsilon)
+    layer_array = load_model_weights_pytorch(weights_path, device)
+    return layer_array_to_clustering_and_quality(layer_array, net_type,
+                                                 num_clusters, eigen_solver,
+                                                 epsilon)

@@ -13,11 +13,7 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from utils import (
-    get_graph_weights_from_live_net,
-    get_weighty_modules_from_live_net,
-    vector_stretch,
-)
+from utils import get_weight_modules_from_live_net, vector_stretch
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -197,10 +193,11 @@ def calculate_clust_reg(cluster_gradient_config, net_type, network):
     network: a pytorch network.
     returns: a tensor float.
     """
+    # TODO REWRITE THIS!
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
-    weight_mats = get_graph_weights_from_live_net(network, net_type)
+    weight_mats = get_weight_modules_from_live_net(network, net_type)
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
     return (cg_lambda / num_eigs) * eig_sum
@@ -216,8 +213,21 @@ def normalize_weights(network, eps=1e-3):
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
     """
-    layers = get_weighty_modules_from_live_net(network)
+    # had better modify the running_mean and running_var to continue to be
+    # right.
+    layers = get_weight_modules_from_live_net(network)
     for idx in range(len(layers) - 1):
+        # basically: instead of just getting the weight attribute of the thing
+        # in the array, I need to figure out what the weighty module is and get
+        # that.
+        # I also need to multiply the incoming weights by the batch norm values
+        # to have them be right
+        # then, I need to scale the batch norm stuff appropriately.
+        # actually what I need to do is just write down what's going on with
+        # the batch norm action and think about how this impacts the scaling
+        # symmetry.
+        # update: this really depends on how I handle cluster grad. So will
+        # start there.
         incoming_weights = layers[idx].weight
         incoming_biases = layers[idx].bias
         outgoing_weights = layers[idx + 1].weight

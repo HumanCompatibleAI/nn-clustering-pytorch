@@ -137,7 +137,7 @@ def weights_to_graph(weights_array):
     return low_tri + low_tri.transpose()
 
 
-def np_layer_array_to_weights_array(np_layer_array, net_type, eps=1e-5):
+def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
     """
     Take in a layer array of numpy tensors, and return an array of 'weight
     tensor' equivalents that can be turned into a graph. Basically, take the
@@ -158,7 +158,7 @@ def np_layer_array_to_weights_array(np_layer_array, net_type, eps=1e-5):
 
     for k, g in itertools.groupby(np_layer_array, has_weights):
         if k:
-            weight_layers = list(g)
+            weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
             break
     for layer_dict in weight_layers:
         my_weights = layer_dict[weight_name]
