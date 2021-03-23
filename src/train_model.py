@@ -416,6 +416,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
             model_path = model_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
             train_exp.add_artifact(model_path)
+            print("Pre-pruning network saved at " + model_path)
 
     if is_pruning:
         for module, name in prune_params_list:
@@ -423,6 +424,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
     save_path = model_path_prefix + '.pth'
     torch.save(network.state_dict(), save_path)
     train_exp.add_artifact(save_path)
+    print("Network saved at " + save_path)
     return test_acc, test_loss, loss_list
 
 
