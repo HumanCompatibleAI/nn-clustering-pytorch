@@ -177,10 +177,11 @@ def tensor_size_np(tensor, comp_tensor):
     return big_tensor
 
 
-def hash_sha256(string):
+def daniel_hash(string):
     """
-    Produce the sha256 hash of a string. Like python's hash but
-    deterministic.
+    Produce the sha256 hash of a string, then get the last 32 bits. Like
+    python's hash but deterministic.
     Returns: an int.
     """
-    return int(hashlib.sha256(str.encode(string)).hexdigest(), 16)
+    hex_hash = hashlib.sha256(str.encode(string)).hexdigest()
+    return int(hex_hash[-8:], 16)

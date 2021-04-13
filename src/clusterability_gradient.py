@@ -12,7 +12,7 @@ from graph_utils import (
     invert_deleted_neurons_np,
     weights_to_graph,
 )
-from utils import hash_sha256, tensor_size_np
+from utils import daniel_hash, tensor_size_np
 
 
 def adj_to_laplacian_and_degs(adj_mat_csr):
@@ -241,9 +241,9 @@ class LaplacianEigenvalues(Function):
                 torch.from_numpy(np.outer(evecs[i + 1], evecs[i + 1])))
         del_rows_tensors = [torch.tensor(entry) for entry in del_rows]
         del_cols_tensors = [torch.tensor(entry) for entry in del_cols]
-        hashed_net_type = hash_sha256(net_type)
+        hashed_net_type = daniel_hash(net_type)
         hashed_tensor_types = [
-            torch.tensor(hash_sha256(name)) for name in tensor_type_array
+            torch.tensor(daniel_hash(name)) for name in tensor_type_array
         ]
         ctx.save_for_backward(torch.tensor(num_workers),
                               torch.tensor(num_eigs),
@@ -252,7 +252,7 @@ class LaplacianEigenvalues(Function):
                               torch.tensor(hashed_net_type),
                               torch.from_numpy(degree_vec), *thin_w_tens_array,
                               *del_rows_tensors, *del_cols_tensors, *outers,
-                              *hashed_tensor_types, *np_tensor_array)
+                              *hashed_tensor_types, *args)
         return torch.from_numpy(evals[1:])
 
     @staticmethod
@@ -269,8 +269,8 @@ class LaplacianEigenvalues(Function):
         num_tensors = num_tensors_tens.item()
         num_layers = num_layers_tens.item()
         hashed_net_type = hashed_net_type_tens.item()
-        assert hashed_net_type in [hash_sha256('mlp'), hash_sha256('cnn')]
-        net_type = 'mlp' if hashed_net_type == hash_sha256('mlp') else 'cnn'
+        assert hashed_net_type in [daniel_hash('mlp'), daniel_hash('cnn')]
+        net_type = 'mlp' if hashed_net_type == daniel_hash('mlp') else 'cnn'
         degree_vec = degree_vec_tens.detach().cpu().numpy()
         assert len(misc_stuff) == 3 * num_layers + num_eigs + 2 * num_tensors
         thin_w_tens_array = misc_stuff[:num_layers]
@@ -323,17 +323,15 @@ class LaplacianEigenvalues(Function):
         # we won't manually edit the running variance, and will hope that sorts
         # itself out.
         final_grad = []
-        weight_name = (hash_sha256('fc_weights')
-                       if net_type == 'mlp' else hash_sha256('conv_weights'))
+        weight_name = (daniel_hash('fc_weights')
+                       if net_type == 'mlp' else daniel_hash('conv_weights'))
         grouped_hash_types = []
         assert hashed_tens_types[0] == weight_name
-        current_group = [weight_name]
-        for h_type in hashed_tens_types[1:]:
+        for i, h_type in enumerate(hashed_tens_types):
             if h_type == weight_name:
-                grouped_hash_types.append(current_group)
-                current_group = [weight_name]
+                grouped_hash_types.append([weight_name])
             else:
-                current_group.append(h_type)
+                grouped_hash_types[-1].append(h_type)
         # grouped_hash_types should look like
         # [[weight_name], [weight_name], [weight_name, bn_weights,
         # bn_running_var], [weight_name, bn_running_var], [weight_name]]
@@ -351,9 +349,9 @@ class LaplacianEigenvalues(Function):
                 tens_dict = {'weights': np_tens_array[np_tens_start_index]}
                 for j in range(1, len(current_group)):
                     tens = np_tens_array[np_tens_start_index + j]
-                    if current_group[j] == hash_sha256('bn_running_var'):
+                    if current_group[j] == daniel_hash('bn_running_var'):
                         tens_dict['bn_running_var'] = tens
-                    if current_group[j] == hash_sha256('bn_weights'):
+                    if current_group[j] == daniel_hash('bn_weights'):
                         tens_dict['bn_weights'] = tens
                 assert 'bn_running_var' in tens_dict \
                     or 'bn_weights' in tens_dict
@@ -380,9 +378,9 @@ class LaplacianEigenvalues(Function):
                     bn_w_grad = np.multiply(bn_w_grad, tens_dict['weights'])
                     bn_w_grad = np.sum(bn_w_grad,
                                        tuple(range(1, bn_w_grad.ndim)))
-                    w_index = current_group.index(hash_sha256('bn_weights'))
+                    w_index = current_group.index(daniel_hash('bn_weights'))
                     v_index = current_group.index(
-                        hash_sha256('bn_running_var'))
+                        daniel_hash('bn_running_var'))
                     assert w_index != v_index
                     if w_index < v_index:
                         final_grad.append(

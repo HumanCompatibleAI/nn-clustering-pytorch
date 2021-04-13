@@ -193,9 +193,9 @@ def module_array_to_clust_grad_input(weight_modules, net_type):
     tensor_array = []
     tensor_type_array = []
     assert net_type in ['mlp', 'cnn']
-    weight_module_name, weight_name = ('fc_mod', 'fc_weights'
-                                       if net_type == 'mlp' else 'conv_mod',
-                                       'conv_weights')
+    weight_module_name, weight_name = (('fc_mod',
+                                        'fc_weights') if net_type == 'mlp' else
+                                       ('conv_mod', 'conv_weights'))
 
     def has_weights(my_dict):
         return weight_module_name in my_dict
@@ -235,7 +235,7 @@ def calculate_clust_reg(cluster_gradient_config, net_type, network):
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
-    weight_modules = get_weight_modules_from_live_net(network, net_type)
+    weight_modules = get_weight_modules_from_live_net(network)
     tensor_arrays = module_array_to_clust_grad_input(weight_modules, net_type)
     tensor_array, tensor_type_array = tensor_arrays
     eig_sum = torch.sum(
