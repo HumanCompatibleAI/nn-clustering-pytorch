@@ -1,3 +1,4 @@
+import itertools
 import math
 
 import numpy as np
@@ -179,6 +180,44 @@ class MyCNN(nn.Module):
         return math.prod(size)
 
 
+def module_array_to_clust_grad_input(weight_modules, net_type):
+    """
+    Turns a layer_array of modules into objects that can be nicely fed into
+    LaplacianEigenvalues.
+    weight_modules: list of dicts containing a layer name and a variety of
+                    pytorch modules
+    net_type: string specifying whether the network is a CNN or an MLP
+    Returns: tuple of (list of pytorch tensors, list of strings specifying what
+                                                each tensor is)
+    """
+    tensor_array = []
+    tensor_type_array = []
+    assert net_type in ['mlp', 'cnn']
+    weight_module_name, weight_name = ('fc_mod', 'fc_weights'
+                                       if net_type == 'mlp' else 'conv_mod',
+                                       'conv_weights')
+
+    def has_weights(my_dict):
+        return weight_module_name in my_dict
+
+    for k, g in itertools.groupby(weight_modules, has_weights):
+        if k:
+            weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
+            break
+
+    for layer_dict in weight_layers:
+        tensor_array.append(layer_dict[weight_module_name].weight)
+        tensor_type_array.append(weight_name)
+        if 'bn_mod' in layer_dict:
+            bn_mod = layer_dict['bn_mod']
+            if hasattr(bn_mod, 'weight') and bn_mod.weight is not None:
+                tensor_array.append(bn_mod.weight)
+                tensor_type_array.append('bn_weights')
+            tensor_array.append(bn_mod.running_var)
+            tensor_type_array.append('bn_running_var')
+    return tensor_array, tensor_type_array
+
+
 def calculate_clust_reg(cluster_gradient_config, net_type, network):
     """
     Calculate the clusterability regularization term of a network.
@@ -193,13 +232,15 @@ def calculate_clust_reg(cluster_gradient_config, net_type, network):
     network: a pytorch network.
     returns: a tensor float.
     """
-    # TODO REWRITE THIS!
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
-    weight_mats = get_weight_modules_from_live_net(network, net_type)
+    weight_modules = get_weight_modules_from_live_net(network, net_type)
+    tensor_arrays = module_array_to_clust_grad_input(weight_modules, net_type)
+    tensor_array, tensor_type_array = tensor_arrays
     eig_sum = torch.sum(
-        LaplacianEigenvalues.apply(num_workers, num_eigs, *weight_mats))
+        LaplacianEigenvalues.apply(num_workers, num_eigs, net_type,
+                                   tensor_type_array, *tensor_array))
     return (cg_lambda / num_eigs) * eig_sum
 
 

@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import scipy.sparse as sparse
 
-from utils import weights_to_layer_widths
+from utils import tensor_size_np, weights_to_layer_widths
 
 
 def delete_isolated_ccs(weights_array, adj_mat):
@@ -99,7 +99,6 @@ def weights_to_graph(weights_array):
     and index 1 for in_{features, channels}.
     weights_array: An array of 2d numpy arrays.
     Returns a sparse CSR matrix representing the adjacency matrix
-    TODO: extend this to take in not just weight matrices but CNN tensors etc.
     """
     # strategy: form the lower diagonal, then transpose to get the upper diag.
     # block_mat is an array of arrays of matrices that is going to be turned
@@ -163,14 +162,12 @@ def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
     for layer_dict in weight_layers:
         my_weights = layer_dict[weight_name]
         if 'bn_weights' in layer_dict:
-            big_bn_weights = layer_dict['bn_weights']
-            for i in range(1, my_weights.ndim):
-                big_bn_weights = np.expand_dims(big_bn_weights, i)
-            my_weights = np.multiply(my_weights, big_bn_weights)
+            my_weights = np.multiply(
+                my_weights, tensor_size_np(layer_dict['bn_weights'],
+                                           my_weights))
         if 'bn_running_var' in layer_dict:
-            big_bn_var = layer_dict['bn_running_var']
-            for i in range(1, my_weights.ndim):
-                big_bn_var = np.expand_dims(big_bn_var, i)
+            big_bn_var = tensor_size_np(layer_dict['bn_running_var'],
+                                        my_weights)
             div_by = np.sqrt(big_bn_var + eps)
             my_weights = np.divide(my_weights, div_by)
         weights_array.append(my_weights)

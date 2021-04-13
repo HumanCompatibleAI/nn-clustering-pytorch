@@ -1,4 +1,5 @@
 import collections
+import hashlib
 import time
 
 import numpy as np
@@ -161,3 +162,25 @@ def vector_stretch(vector, length):
         for j in range(mult):
             stretched_vec[i * mult + j] = val
     return stretched_vec
+
+
+def tensor_size_np(tensor, comp_tensor):
+    """
+    Expand size of tensor until it has the same number of dims as comp_tensor
+    tensor: numpy tensor
+    comp_tensor: numpy tensor
+    Returns: numpy tensor
+    """
+    big_tensor = tensor
+    for i in range(big_tensor.ndim, comp_tensor.ndim):
+        big_tensor = np.expand_dims(big_tensor, i)
+    return big_tensor
+
+
+def hash_sha256(string):
+    """
+    Produce the sha256 hash of a string. Like python's hash but
+    deterministic.
+    Returns: an int.
+    """
+    return int(hashlib.sha256(str.encode(string)).hexdigest(), 16)
