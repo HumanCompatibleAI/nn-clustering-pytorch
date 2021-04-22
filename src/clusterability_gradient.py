@@ -12,7 +12,7 @@ from graph_utils import (
     invert_deleted_neurons_np,
     weights_to_graph,
 )
-from utils import daniel_hash, tensor_size_np
+from utils import daniel_hash, size_and_multiply_np, size_sqrt_divide_np
 
 
 def adj_to_laplacian_and_degs(adj_mat_csr):
@@ -189,13 +189,10 @@ def tensor_arrays_to_graph_weights_array(tensor_type_array, tensor_array,
             weights_array.append(tens)
         if name == 'bn_weights':
             my_tens = weights_array[-1]
-            weights_array[-1] = np.multiply(my_tens,
-                                            tensor_size_np(tens, my_tens))
+            weights_array[-1] = size_and_multiply_np(tens, my_tens)
         if name == 'bn_running_var':
             my_tens = weights_array[-1]
-            big_bn_var = tensor_size_np(tens, my_tens)
-            div_by = np.sqrt(big_bn_var + 1e-5)
-            weights_array[-1] = np.divide(my_tens, div_by)
+            weights_array[-1] = size_sqrt_divide_np(tens, my_tens)
     return weights_array
 
 
@@ -357,24 +354,18 @@ class LaplacianEigenvalues(Function):
                     or 'bn_weights' in tens_dict
                 weight_grad = grad
                 if 'bn_weights' in tens_dict:
-                    sized_bn_weights = tensor_size_np(tens_dict['bn_weights'],
-                                                      weight_grad)
-                    weight_grad = np.multiply(weight_grad, sized_bn_weights)
+                    weight_grad = size_and_multiply_np(tens_dict['bn_weights'],
+                                                       weight_grad)
                 if 'bn_running_var' in tens_dict:
-                    sized_bn_var = tensor_size_np(tens_dict['bn_running_var'],
-                                                  weight_grad)
-                    # I'm just going to assume eps=1e-5 here yolo
-                    div_by = np.sqrt(sized_bn_var + 1e-5)
-                    weight_grad = np.divide(weight_grad, div_by)
+                    weight_grad = size_sqrt_divide_np(
+                        tens_dict['bn_running_var'], weight_grad)
                 final_grad.append(torch.from_numpy(weight_grad).to(device))
 
                 # add gradients for bn_weights and bn_running_var
                 # bn_running_var gets no gradient.
                 if 'bn_weights' in tens_dict and 'bn_running_var' in tens_dict:
-                    sized_bn_var = tensor_size_np(tens_dict['bn_running_var'],
-                                                  grad)
-                    var_div_by = np.sqrt(sized_bn_var + 1e-5)
-                    bn_w_grad = np.divide(grad, var_div_by)
+                    bn_w_grad = size_sqrt_divide_np(
+                        tens_dict['bn_running_var'], grad)
                     bn_w_grad = np.multiply(bn_w_grad, tens_dict['weights'])
                     bn_w_grad = np.sum(bn_w_grad,
                                        tuple(range(1, bn_w_grad.ndim)))
@@ -394,6 +385,8 @@ class LaplacianEigenvalues(Function):
                     final_grad.append(None)
                 else:
                     # now tens_dict just has bn_weights
+                    # after writing this code I've realized that this should
+                    # theoretically never happen. But whatever.
                     bn_w_grad = np.multiply(grad, tens_dict['weights'])
                     bn_w_grad = np.sum(bn_w_grad,
                                        tuple(range(1, bn_w_grad.ndim)))

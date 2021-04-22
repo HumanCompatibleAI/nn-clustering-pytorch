@@ -3,7 +3,11 @@ import itertools
 import numpy as np
 import scipy.sparse as sparse
 
-from utils import tensor_size_np, weights_to_layer_widths
+from utils import (
+    size_and_multiply_np,
+    size_sqrt_divide_np,
+    weights_to_layer_widths,
+)
 
 
 def delete_isolated_ccs(weights_array, adj_mat):
@@ -144,10 +148,12 @@ def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
     and absorb the batch norm parts.
     np_layer_array: array of dicts containing layer names and np weight tensors
     net_type: 'mlp' or 'cnn'
+    eps: small positive float
     Returns: array of numpy tensors ready to be turned into a graph.
     """
-    weights_array = []
     assert net_type in ['mlp', 'cnn']
+    assert eps > 0
+    weights_array = []
     # take the first contiguous block of layers containing desired weight
     # tensors
     weight_name = 'fc_weights' if net_type == 'mlp' else 'conv_weights'
@@ -162,13 +168,10 @@ def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
     for layer_dict in weight_layers:
         my_weights = layer_dict[weight_name]
         if 'bn_weights' in layer_dict:
-            my_weights = np.multiply(
-                my_weights, tensor_size_np(layer_dict['bn_weights'],
-                                           my_weights))
+            my_weights = size_and_multiply_np(layer_dict['bn_weights'],
+                                              my_weights)
         if 'bn_running_var' in layer_dict:
-            big_bn_var = tensor_size_np(layer_dict['bn_running_var'],
-                                        my_weights)
-            div_by = np.sqrt(big_bn_var + eps)
-            my_weights = np.divide(my_weights, div_by)
+            my_weights = size_sqrt_divide_np(layer_dict['bn_running_var'],
+                                             my_weights, eps)
         weights_array.append(my_weights)
     return weights_array

@@ -28,3 +28,10 @@ Also, the only layers to have names starting with `fc` should be fully connected
 - batch norm has got to be in the module dict of the linear transform it comes after
 - inside layers, names have to be exactly right
 - layers can't contain both a conv and an fc layer
+- you can only have one batch norm between two linear transforms.
+
+TODO: Write function to test whether network def complies with format.
+TODO: Test how good clust grad training is.
+TODO: specify format better here.
+TODO: use torch.autograd.gradcheck to see if I'm calculating clust grad right
+TODO: eventually move away from the 'weight array' abstraction at all, once we have to deal with batch norm

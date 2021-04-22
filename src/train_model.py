@@ -14,7 +14,12 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
-from utils import get_weight_modules_from_live_net, vector_stretch
+from utils import (
+    get_weight_modules_from_live_net,
+    size_and_multiply_np,
+    size_sqrt_divide_np,
+    vector_stretch,
+)
 
 train_exp = Experiment('train_model')
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -269,21 +274,41 @@ def normalize_weights(network, eps=1e-3):
         # symmetry.
         # update: this really depends on how I handle cluster grad. So will
         # start there.
-        incoming_weights = layers[idx].weight
-        incoming_biases = layers[idx].bias
-        outgoing_weights = layers[idx + 1].weight
-        num_neurons = incoming_weights.shape[0]
+        this_layer = layers[idx]
+        next_layer = layers[idx + 1]
+        assert 'fc_mod' in this_layer or 'conv_mod' in this_layer
+        assert 'fc_mod' in next_layer or 'conv_mod' in next_layer
+        inc_raw_weight_mod = (this_layer['fc_mod'] if 'fc_mod' in this_layer
+                              else this_layer['conv_mod'])
+        inc_raw_weights = inc_raw_weight_mod.weight
+        inc_raw_bias = inc_raw_weight_mod.bias
+        inc_weights_np = inc_raw_weights.detach().cpu().numpy()
+        inc_biases_np = inc_raw_bias.detach().cpu().numpy()
+        if 'bn_mod' in this_layer:
+            bn_mod = this_layer['bn_mod']
+            if hasattr(bn_mod, 'weight') and bn_mod.weight is not None:
+                bn_weights_np = bn_mod.weight.detach().cpu().numpy()
+                inc_weights_np = size_and_multiply_np(bn_weights_np,
+                                                      inc_weights_np)
+            inc_weights_np = size_sqrt_divide_np(bn_mod.running_var,
+                                                 inc_weights_np)
+        outgoing_weight_mod = (next_layer['fc_mod'] if 'fc_mod' in next_layer
+                               else next_layer['conv_mod'])
+        outgoing_weights = outgoing_weight_mod.weight
+        num_neurons = inc_weights_np.shape[0]
         assert outgoing_weights.shape[1] % num_neurons == 0
-        assert num_neurons == incoming_biases.shape[0]
+        assert num_neurons == inc_biases_np.shape[0]
 
-        unsqueezed_bias = torch.unsqueeze(incoming_biases, 1)
-        flat_weights = torch.flatten(incoming_weights, start_dim=1)
-        all_inc_weights = torch.cat((flat_weights, unsqueezed_bias), 1)
-        scales = torch.linalg.norm(all_inc_weights, dim=1)
+        unsqueezed_bias = np.expand_dims(inc_biases_np, axis=1)
+        flat_weights = inc_weights_np.reshape(inc_weights_np.shape[0], -1)
+        all_inc_weights = np.concatenate((flat_weights, unsqueezed_bias),
+                                         axis=1)
+        scales = np.linalg.norm(all_inc_weights, axis=1)
         scales /= np.sqrt(2.)
         scales += eps
+        scales = torch.from_numpy(scales)
         scales_rows = torch.unsqueeze(scales, 1)
-        for i in range(len(incoming_weights.shape)):
+        for i in range(len(inc_raw_weights.shape)):
             if i > 1:
                 scales_rows = torch.unsqueeze(scales_rows, i)
         scales_mul = vector_stretch(scales, outgoing_weights.shape[1])
@@ -294,24 +319,25 @@ def normalize_weights(network, eps=1e-3):
         incoming_weights_unpruned = True
         incoming_biases_unpruned = True
         outgoing_weights_unpruned = True
-        for name, param in layers[idx].named_parameters():
+        for name, param in inc_raw_weight_mod.named_parameters():
             if name == 'weight_orig':
                 param.data = torch.div(param, scales_rows)
                 incoming_weights_unpruned = False
             if name == 'bias_orig':
                 param.data = torch.div(param, scales)
                 incoming_biases_unpruned = False
-        for name, param in layers[idx + 1].named_parameters():
+        for name, param in outgoing_weight_mod.named_parameters():
             if name == 'weight_orig':
                 param.data = torch.mul(param, scales_mul)
                 outgoing_weights_unpruned = False
         if incoming_weights_unpruned:
-            layers[idx].weight.data = torch.div(incoming_weights, scales_rows)
+            inc_raw_weight_mod.weight.data = torch.div(inc_raw_weights,
+                                                       scales_rows)
         if incoming_biases_unpruned:
-            layers[idx].bias.data = torch.div(incoming_biases, scales)
+            inc_raw_weight_mod.bias.data = torch.div(inc_raw_bias, scales)
         if outgoing_weights_unpruned:
-            layers[idx + 1].weight.data = torch.mul(outgoing_weights,
-                                                    scales_mul)
+            outgoing_weight_mod.weight.data = torch.mul(
+                outgoing_weights, scales_mul)
 
 
 def calculate_sparsity_factor(final_sparsity, num_prunes_so_far,

@@ -21,21 +21,6 @@ def compute_percentile(x, arr):
     return r / n
 
 
-# def get_weighty_modules_from_live_net(network):
-#     """
-#     Takes a neural network, and returns the modules from it that have proper
-#     weight tensors (i.e. not including batchnorm modules)
-#     network: a neural network, that has to inherit from nn.Module
-#     returns: a list of nn.Modules
-#     """
-#     weighty_modules = []
-#     weighty_module_types = [torch.nn.Linear, torch.nn.Conv2d]
-#     for module in network.modules():
-#         if any([isinstance(module, t) for t in weighty_module_types]):
-#             weighty_modules.append(module)
-#     return weighty_modules
-
-
 def get_weight_modules_from_live_net(network):
     """
     Takes a neural network, and gets modules in it that contain relevant
@@ -175,6 +160,27 @@ def tensor_size_np(tensor, comp_tensor):
     for i in range(big_tensor.ndim, comp_tensor.ndim):
         big_tensor = np.expand_dims(big_tensor, i)
     return big_tensor
+
+
+def size_and_multiply_np(wrong_size_tensor, right_size_tensor):
+    """
+    Expand size of wrong_size_tensor until it has the same number of dims as
+    right_size_tensor, then multiply it with right_size_tensor
+    inputs and outputs all numpy tensors
+    """
+    return np.multiply(right_size_tensor,
+                       tensor_size_np(wrong_size_tensor, right_size_tensor))
+
+
+def size_sqrt_divide_np(wrong_size_tensor, right_size_tensor, eps=1e-5):
+    """
+    Read the code.
+    wrong_size_tensor, right_size_tensor: numpy tensors
+    eps: small float > 0
+    """
+    big_tens = tensor_size_np(wrong_size_tensor, right_size_tensor)
+    div_by = np.sqrt(big_tens + eps)
+    return np.divide(right_size_tensor, div_by)
 
 
 def daniel_hash(string):
