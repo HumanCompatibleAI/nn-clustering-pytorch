@@ -6,10 +6,14 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
-from graph_utils import delete_isolated_ccs, weights_to_graph
+from graph_utils import (
+    delete_isolated_ccs,
+    np_layer_array_to_graph_weights_array,
+    weights_to_graph,
+)
 from spectral_cluster_model import (
     adj_mat_to_clustering_and_quality,
-    weights_array_to_clustering_and_quality,
+    layer_array_to_clustering_and_quality,
 )
 from utils import (
     compute_percentile,
@@ -69,17 +73,36 @@ def shuffle_weight_tensor_nonzero(weight_tensor):
     return np.reshape(permuted_flat_tensor, tensor_shape)
 
 
-def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
-                        epsilon, shuffle_method, seed_int):
+def shuffle_layer_array(shuffle_func, layer_array):
+    """
+    Apply shuffle_func to all numpy arrays within a layer array
+    shuffle_func: a function from numpy ndarrays to numpy ndarrays
+    layer_array: a list of dicts of layer info, including some numpy ndarrays
+    returns: a new layer array with permuted weights
+    """
+    new_layer_array = []
+    for layer_dict in layer_array:
+        new_layer_dict = {}
+        assert isinstance(layer_dict, dict)
+        for key, val in layer_dict.items():
+            if isinstance(val, np.ndarray):
+                new_layer_dict[key] = shuffle_func(val)
+        new_layer_array.append(new_layer_dict)
+    return new_layer_array
+
+
+def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
+                        eigen_solver, epsilon, shuffle_method, seed_int):
     """
     shuffles a weights array a number of times, then finds the n-cut of each
     shuffle.
-    num_samples: an int for the number of shuffles
-    weights_array: an array of weight tensors (numpy arrays)
-    num_clusters: an int for the number of clusters to cluster into
+    num_samples: an int for the number of shuffles.
+    layer_array: an array of layer dicts containing numpy ndarrays.
+    net_type: string indicating whether the network is an MLP or a CNN.
+    num_clusters: an int for the number of clusters to cluster into.
     eigen_solver: a string or None specifying which eigenvector solver spectral
-                  clustering should use
-    epsilon: a small positive float for stopping us from dividing by zero
+                  clustering should use.
+    epsilon: a small positive float for stopping us from dividing by zero.
     seed_int: an integer to set the numpy random seed to determine the
               shufflings.
     returns an array of floats
@@ -91,9 +114,10 @@ def shuffle_and_cluster(num_samples, weights_array, num_clusters, eigen_solver,
     np.random.seed(seed_int)
     n_cuts = []
     for _ in range(num_samples):
-        shuffled_weights_array = list(map(shuffle_func, weights_array))
-        n_cut, _ = weights_array_to_clustering_and_quality(
-            shuffled_weights_array, num_clusters, eigen_solver, epsilon)
+        shuffled_layer_array = shuffle_layer_array(shuffle_func, layer_array)
+        n_cut, _ = layer_array_to_clustering_and_quality(
+            shuffled_layer_array, net_type, num_clusters, eigen_solver,
+            epsilon)
         n_cuts.append(n_cut)
     return n_cuts
 
@@ -105,6 +129,9 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
     connected components.
+    NB: if the main net has isolated connected components, those neurons might
+    gain connections when the net is shuffled (unlike in Clusterability in
+    Neural Networks arXiv:2103.03386)
     weights_path: path to where weights are saved. String suffices.
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
@@ -124,14 +151,16 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    weights_array_ = load_model_weights_pytorch(weights_path, net_type, device)
+    layer_array = load_model_weights_pytorch(weights_path, device)
+    weights_array_ = np_layer_array_to_graph_weights_array(
+        layer_array, net_type)
     adj_mat_ = weights_to_graph(weights_array_)
     weights_array, adj_mat, _, _ = delete_isolated_ccs(weights_array_,
                                                        adj_mat_)
     true_n_cut, _ = adj_mat_to_clustering_and_quality(adj_mat, num_clusters,
                                                       eigen_solver, epsilon)
     time_int = get_random_int_time()
-    shuffled_n_cuts = shuffle_and_cluster(num_samples, weights_array,
+    shuffled_n_cuts = shuffle_and_cluster(num_samples, layer_array, net_type,
                                           num_clusters, eigen_solver, epsilon,
                                           shuffle_method, time_int)
 
