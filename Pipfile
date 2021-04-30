@@ -13,6 +13,7 @@ sklearn = "*"
 pathos = "*"
 torchviz = "*"
 Pillow = ">=8.1.1"
+requests = "*"
 
 [dev-packages]
 pre-commit = "*"
