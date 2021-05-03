@@ -77,9 +77,11 @@ def load_datasets(dataset, batch_size):
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
-    assert dataset in ['kmnist']
+    assert dataset in ['kmnist', 'cifar10']
     if dataset == 'kmnist':
         return load_kmnist(batch_size)
+    elif dataset == 'cifar10':
+        return load_cifar10(batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
 
@@ -104,6 +106,30 @@ def load_kmnist(batch_size):
                                               shuffle=True)
     classes = ("o", "ki", "su", "tsu", "na", "ha", "ma", "ya", "re", "wo")
     return (train_loader, test_loader, classes)
+
+
+def load_cifar10(batch_size):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    train_set = torchvision.datasets.CIFAR10(root="./datasets",
+                                             train=True,
+                                             download=True,
+                                             transform=transform)
+    train_loader = torch.utils.data.DataLoader(train_set,
+                                               batch_size=batch_size,
+                                               shuffle=True)
+    test_set = torchvision.datasets.CIFAR10(root="./datasets",
+                                            train=False,
+                                            download=True,
+                                            transform=transform)
+    test_loader = torch.utils.data.DataLoader(test_set,
+                                              batch_size=batch_size,
+                                              shuffle=True)
+    classes = ("plane", "car", "bird", "cat", "deer", "dog", "frog", "horse",
+               "ship", "truck")
+    return train_loader, test_loader, classes
 
 
 # TODO: pass in layer widths, params.
