@@ -35,7 +35,7 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 @train_exp.config
 def mlp_config():
     batch_size = 128
-    num_epochs = 3
+    num_epochs = 20
     log_interval = 100
     dataset = 'kmnist'
     model_dir = './models/'
@@ -44,7 +44,7 @@ def mlp_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 1,
+        'num pruning epochs': 5,
         # no pruning if num pruning epochs = 0
         'final sparsity': 0.9
     }
@@ -169,41 +169,51 @@ class MyCNN(nn.Module):
     def __init__(self):
         super(MyCNN, self).__init__()
         # see README for why this is structured weirdly
-        self.hidden1 = 32
-        self.hidden2 = 64
+        self.hidden1 = 64
+        self.hidden2 = 128
         self.hidden3 = 128
         self.hidden4 = 256
-        self.layer1 = nn.ModuleDict({"conv": nn.Conv2d(1, self.hidden1, 3)})
+        self.hidden5 = 256
+        self.layer1 = nn.ModuleDict(
+            {"conv": nn.Conv2d(3, self.hidden1, 3, padding=1)})
         self.layer2 = nn.ModuleDict({
             "conv":
-            nn.Conv2d(self.hidden1, self.hidden2, 3),
+            nn.Conv2d(self.hidden1, self.hidden2, 3, padding=1),
             "maxPool":
             nn.MaxPool2d(2, 2),
-            "drop":
-            nn.Dropout(p=0.25)
-        })
-        self.layer3 = nn.ModuleDict({
-            "conv":
-            nn.Conv2d(self.hidden2, self.hidden3, 3),
             "bn":
-            nn.BatchNorm2d(self.hidden3)
+            nn.BatchNorm2d(self.hidden2)
         })
+        self.layer3 = nn.ModuleDict(
+            {"conv": nn.Conv2d(self.hidden2, self.hidden3, 3, padding=1)})
         self.layer4 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden3, self.hidden4, 3, padding=1),
+            "maxPool":
+            nn.MaxPool2d(2, 2),
+            "bn":
+            nn.BatchNorm2d(self.hidden4)
+        })
+        self.layer5 = nn.ModuleDict({
             "fc":
-            nn.Linear(self.hidden3 * 10 * 10, self.hidden4),
+            nn.Linear(self.hidden4 * 8 * 8, self.hidden5),
+            # is 10*10 for other nets. TODO: have different nets for different
+            # datasets
             "drop":
             nn.Dropout(p=0.50)
         })
-        self.layer5 = nn.ModuleDict({"fc": nn.Linear(self.hidden4, 10)})
+        self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
 
     def forward(self, x):
         x = F.relu(self.layer1["conv"](x))
-        x = F.relu(self.layer2["conv"](x))
-        x = self.layer2["drop"](self.layer2["maxPool"](x))
-        x = F.relu(self.layer3["bn"](self.layer3["conv"](x)))
+        x = F.relu(self.layer2["bn"](self.layer2["conv"](x)))
+        x = self.layer2["maxPool"](x)
+        x = F.relu(self.layer3["conv"](x))
+        x = F.relu(self.layer4["bn"](self.layer4["conv"](x)))
+        x = self.layer4["maxPool"](x)
         x = x.view(-1, self.num_flat_features(x))
-        x = self.layer4["drop"](F.relu(self.layer4["fc"](x)))
-        x = self.layer5["fc"](x)
+        x = self.layer5["drop"](F.relu(self.layer5["fc"](x)))
+        x = self.layer6["fc"](x)
         return x
 
     def num_flat_features(self, x):
