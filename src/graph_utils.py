@@ -30,8 +30,10 @@ def delete_isolated_ccs(weights_array, adj_mat):
     cum_sums = np.insert(cum_sums, 0, 0)
     initial_ccs = set(labels[i] for i in range(cum_sums[0], cum_sums[1]))
     final_ccs = set(labels[i] for i in range(cum_sums[-2], cum_sums[-1]))
-    isolated_ccs = set(range(nc)).difference(
-        initial_ccs.intersection(final_ccs))
+    main_ccs = initial_ccs.intersection(final_ccs)
+    isolated_ccs = set(range(nc)).difference(main_ccs)
+    if not main_ccs:
+        print("This neural network isn't connected from start to end.")
     # if there aren't isolated ccs, don't bother deleting any
     if not isolated_ccs:
         return weights_array, adj_mat, empty_del_array, empty_del_array
