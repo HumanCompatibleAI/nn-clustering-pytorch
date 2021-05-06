@@ -229,8 +229,6 @@ class LaplacianEigenvalues(Function):
         assert len(thin_w_array) == num_layers
         thin_w_tens_array = [torch.from_numpy(tens) for tens in thin_w_array]
         lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
-        print("Num eigs in clust reg:", num_eigs)
-        print("Laplacian matrix shape in clust reg:", lap_mat_csr.shape)
         evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, sigma=-1.0, which='LM')
         evecs = np.transpose(evecs)
         # ^ makes evecs (num eigenvals) * (size of lap mat)
