@@ -294,6 +294,7 @@ class LaplacianEigenvalues(Function):
         np_tens_array = [tens.detach().cpu().numpy() for tens in tens_array]
 
         # calculate gradient wrt 'thin tensors' (post deletion of isolated ccs)
+        # this is where the bulk of the calculation is done!
         dy_dL = np.tensordot(dy, outers, [[0], [0]])
         penult_grad = get_dy_dW_np(degree_vec, thin_w_np_array, dy_dL,
                                    num_workers)
