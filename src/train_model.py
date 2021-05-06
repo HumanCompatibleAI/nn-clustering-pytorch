@@ -40,6 +40,7 @@ def mlp_config():
     dataset = 'kmnist'
     model_dir = './models/'
     net_type = 'mlp'
+    net_choice = 'small'
     # pruning will be as described in Zhu and Gupta 2017, arXiv:1710.01878
     pruning_config = {
         'exponent': 3,
@@ -52,7 +53,7 @@ def mlp_config():
     cluster_gradient_config = {
         'num_workers': 2,
         'num_eigs': 3,
-        'lambda': 1,
+        'lambda': 1e-7,
         'frequency': 20
     }
     save_path_prefix = (model_dir + net_type + '_' + dataset +
@@ -132,13 +133,12 @@ def load_cifar10(batch_size):
     return train_loader, test_loader, classes
 
 
-# TODO: pass in layer widths, params.
-class MyMLP(nn.Module):
+class SmallMLP(nn.Module):
     """
     A simple MLP, likely not very competitive
     """
     def __init__(self):
-        super(MyMLP, self).__init__()
+        super(SmallMLP, self).__init__()
         # see README for why this is structured weirdly
         self.hidden1 = 512
         self.hidden2 = 512
@@ -159,15 +159,62 @@ class MyMLP(nn.Module):
         return x
 
 
-# TODO: pass in layer widths etc.
-# also TODO: make deeper
-class MyCNN(nn.Module):
+mlp_dict = {'small': SmallMLP}
+
+
+class SmallCNN(nn.Module):
     """
-    A simple CNN, modified from the KMNIST benchmark:
+    A simple CNN, taken from the KMNIST benchmark:
     https://github.com/rois-codh/kmnist/blob/master/benchmarks/kuzushiji_mnist_cnn.py
     """
     def __init__(self):
-        super(MyCNN, self).__init__()
+        super(SmallCNN, self).__init__()
+        self.hidden1 = 32
+        self.hidden2 = 64
+        self.hidden3 = 128
+        self.hidden4 = 256
+        # NOTE: conv layers MUST have names starting with 'conv'
+        self.layer1 = nn.ModuleDict({"conv": nn.Conv2d(1, self.hidden1, 3)})
+        self.layer2 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden1, self.hidden2, 3),
+            "maxPool":
+            nn.MaxPool2d(2, 2),
+            "dropout":
+            nn.Dropout(p=0.25)
+        })
+        self.layer3 = nn.ModuleDict(
+            {"conv": nn.Conv2d(self.hidden2, self.hidden3, 3)})
+        self.layer4 = nn.ModuleDict({
+            "fc":
+            nn.Linear(self.hidden3 * 10 * 10, self.hidden4),
+            "dropout":
+            nn.Dropout(p=0.50)
+        })
+        self.layer5 = nn.ModuleDict({"fc": nn.Linear(self.hidden4, 10)})
+
+    def forward(self, x):
+        x = F.relu(self.layer1["conv"](x))
+        x = F.relu(self.layer2["conv"](x))
+        x = self.layer2["dropout"](self.layer2["maxPool"](x))
+        x = F.relu(self.layer3["conv"](x))
+        x = x.view(-1, self.num_flat_features(x))
+        x = self.layer4["dropout"](F.relu(self.layer4["fc"](x)))
+        x = self.layer5["fc"](x)
+        return x
+
+    def num_flat_features(self, x):
+        size = x.size()[1:]
+        return math.prod(size)
+
+
+# TODO: pass in layer widths etc.
+class CIFAR10_BN_CNN(nn.Module):
+    """
+    A 6-layer CNN using batch norm, sized for CIFAR-10
+    """
+    def __init__(self):
+        super(CIFAR10_BN_CNN, self).__init__()
         # see README for why this is structured weirdly
         self.hidden1 = 64
         self.hidden2 = 128
@@ -197,8 +244,6 @@ class MyCNN(nn.Module):
         self.layer5 = nn.ModuleDict({
             "fc":
             nn.Linear(self.hidden4 * 8 * 8, self.hidden5),
-            # is 10*10 for other nets. TODO: have different nets for different
-            # datasets
             "drop":
             nn.Dropout(p=0.50)
         })
@@ -219,6 +264,66 @@ class MyCNN(nn.Module):
     def num_flat_features(self, x):
         size = x.size()[1:]
         return math.prod(size)
+
+
+class CIFAR10_CNN(nn.Module):
+    """
+    A 6-layer CNN sized for CIFAR-10
+    """
+    def __init__(self):
+        super(CIFAR10_CNN, self).__init__()
+        # see README for why this is structured weirdly
+        self.hidden1 = 64
+        self.hidden2 = 128
+        self.hidden3 = 128
+        self.hidden4 = 256
+        self.hidden5 = 256
+        self.layer1 = nn.ModuleDict(
+            {"conv": nn.Conv2d(3, self.hidden1, 3, padding=1)})
+        self.layer2 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden1, self.hidden2, 3, padding=1),
+            "maxPool":
+            nn.MaxPool2d(2, 2)
+        })
+        self.layer3 = nn.ModuleDict(
+            {"conv": nn.Conv2d(self.hidden2, self.hidden3, 3, padding=1)})
+        self.layer4 = nn.ModuleDict({
+            "conv":
+            nn.Conv2d(self.hidden3, self.hidden4, 3, padding=1),
+            "maxPool":
+            nn.MaxPool2d(2, 2)
+        })
+        self.layer5 = nn.ModuleDict({
+            "fc":
+            nn.Linear(self.hidden4 * 8 * 8, self.hidden5),
+            "drop":
+            nn.Dropout(p=0.50)
+        })
+        self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
+
+    def forward(self, x):
+        x = F.relu(self.layer1["conv"](x))
+        x = F.relu(self.layer2["bn"](self.layer2["conv"](x)))
+        x = self.layer2["maxPool"](x)
+        x = F.relu(self.layer3["conv"](x))
+        x = F.relu(self.layer4["bn"](self.layer4["conv"](x)))
+        x = self.layer4["maxPool"](x)
+        x = x.view(-1, self.num_flat_features(x))
+        x = self.layer5["drop"](F.relu(self.layer5["fc"](x)))
+        x = self.layer6["fc"](x)
+        return x
+
+    def num_flat_features(self, x):
+        size = x.size()[1:]
+        return math.prod(size)
+
+
+cnn_dict = {
+    'cifar10_bn': CIFAR10_BN_CNN,
+    'cifar10': CIFAR10_CNN,
+    'small': SmallCNN
+}
 
 
 def module_array_to_clust_grad_input(weight_modules, net_type):
@@ -565,13 +670,14 @@ def eval_net(network, test_loader, device, criterion, _run):
 
 
 @train_exp.automain
-def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
-                 pruning_config, cluster_gradient, cluster_gradient_config,
-                 save_path_prefix, _run):
+def run_training(dataset, net_type, net_choice, num_epochs, batch_size,
+                 log_interval, pruning_config, cluster_gradient,
+                 cluster_gradient_config, save_path_prefix, _run):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
     net_type: string indicating whether the model is an MLP or a CNN
+    net_choice: string choosing which model to train
     num_epochs: int
     batch_size: int
     log_interval: int. number of iterations to go between logging infodumps
@@ -596,7 +702,8 @@ def run_training(dataset, net_type, num_epochs, batch_size, log_interval,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
-    my_net = MyMLP() if net_type == 'mlp' else MyCNN()
+    my_net = (mlp_dict[net_choice]()
+              if net_type == 'mlp' else cnn_dict[net_choice]())
     optimizer = optim.Adam(my_net.parameters())
     train_loader, test_loader, classes = load_datasets()
     test_acc, test_loss, loss_list = train_and_save(
