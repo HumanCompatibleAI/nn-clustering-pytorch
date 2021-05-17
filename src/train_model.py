@@ -53,8 +53,9 @@ def mlp_config():
     cluster_gradient_config = {
         'num_workers': 2,
         'num_eigs': 3,
-        'lambda': 1e-7,
-        'frequency': 20
+        'lambda': 1e-3,
+        'frequency': 20,
+        'normalize': True
     }
     save_path_prefix = (model_dir + net_type + '_' + dataset +
                         cluster_gradient * '_clust-grad')
@@ -400,21 +401,9 @@ def normalize_weights(network, eps=1e-3):
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
     """
-    # had better modify the running_mean and running_var to continue to be
-    # right.
+    # TODO: figure out whether I should be normalizing BN layers
     layers = get_weight_modules_from_live_net(network)
     for idx in range(len(layers) - 1):
-        # basically: instead of just getting the weight attribute of the thing
-        # in the array, I need to figure out what the weighty module is and get
-        # that.
-        # I also need to multiply the incoming weights by the batch norm values
-        # to have them be right
-        # then, I need to scale the batch norm stuff appropriately.
-        # actually what I need to do is just write down what's going on with
-        # the batch norm action and think about how this impacts the scaling
-        # symmetry.
-        # update: this really depends on how I handle cluster grad. So will
-        # start there.
         this_layer = layers[idx]
         next_layer = layers[idx + 1]
         assert 'fc_mod' in this_layer or 'conv_mod' in this_layer
@@ -438,7 +427,10 @@ def normalize_weights(network, eps=1e-3):
         outgoing_weights = outgoing_weight_mod.weight
         num_neurons = inc_weights_np.shape[0]
         assert outgoing_weights.shape[1] % num_neurons == 0
-        assert num_neurons == inc_biases_np.shape[0]
+        if 'fc_mod' in this_layer and 'fc_mod' in next_layer:
+            assert outgoing_weights.shape[1] == num_neurons
+        if 'conv_mod' in this_layer and 'conv_mod' in next_layer:
+            assert outgoing_weights.shape[1] == num_neurons
 
         unsqueezed_bias = np.expand_dims(inc_biases_np, axis=1)
         flat_weights = inc_weights_np.reshape(inc_weights_np.shape[0], -1)
@@ -589,7 +581,8 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
             loss = criterion(outputs, labels)
             if cluster_gradient:
                 if i % cluster_gradient_config['frequency'] == 0:
-                    normalize_weights(network)
+                    if cluster_gradient_config['normalize']:
+                        normalize_weights(network)
                     clust_reg_term = calculate_clust_reg(
                         cluster_gradient_config, net_type, network)
                     loss += (clust_reg_term *
