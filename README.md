@@ -15,14 +15,6 @@ After cloning, enter the pipenv by running `pipenv shell`. To install dependenci
 
 This codebase uses `sacred` extensively, which you can read about [here](https://sacred.readthedocs.io/en/stable/).
 
-NB: clustering requires the names of layers in networks to follow a pattern:
-
-- fully connected layers should have names starting with `fc`
-- convolutional layers should have names starting with `conv`
-- batch norm layers should have names starting with `bn`
-
-Also, the only layers to have names starting with `fc` should be fully connected layers, etc.
-
 NB: the codebase assumes that networks are defined in a very specific way:
 
 - Modules are grouped into ModuleDicts (see [this pytorch doc page](https://pytorch.org/docs/stable/generated/torch.nn.ModuleDict.html)), with one ModuleDict per layer.
