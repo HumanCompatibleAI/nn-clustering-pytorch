@@ -45,9 +45,9 @@ def mlp_config():
     pruning_config = {
         'exponent': 3,
         'frequency': 100,
-        'num pruning epochs': 5,
-        # no pruning if num pruning epochs = 0
-        'final sparsity': 0.9
+        'num_pruning_epochs': 5,
+        # no pruning if num_pruning_epochs = 0
+        'final_sparsity': 0.9
     }
     cluster_gradient = False
     cluster_gradient_config = {
@@ -527,10 +527,10 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                 pruning)
     pruning_config: dict containing 'exponent', a numeric type, 'frequency',
                     int representing the number of training steps to have
-                    between prunes, 'num pruning epochs', int representing the
-                    number of epochs to prune for, and 'final sparsity', float
+                    between prunes, 'num_pruning_epochs', int representing the
+                    number of epochs to prune for, and 'final_sparsity', float
                     representing how sparse the final net should be.
-                    If 'num pruning epochs' is 0, no other elements are
+                    If 'num_pruning_epochs' is 0, no other elements are
                     accessed.
     cluster_gradient: bool representing whether or not to apply the
                       clusterability gradient
@@ -554,8 +554,8 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
     network.to(device)
     loss_list = []
 
-    num_pruning_epochs = pruning_config['num pruning epochs']
-    final_sparsity = pruning_config['final sparsity']
+    num_pruning_epochs = pruning_config['num_pruning_epochs']
+    final_sparsity = pruning_config['final_sparsity']
     start_pruning_epoch = num_epochs - num_pruning_epochs
     is_pruning = num_pruning_epochs != 0
     if is_pruning:
@@ -676,8 +676,8 @@ def run_training(dataset, net_type, net_choice, num_epochs, batch_size,
     log_interval: int. number of iterations to go between logging infodumps
     pruning_config: dict containing 'exponent', a numeric type, 'frequency',
                     int representing the number of training steps to have
-                    between prunes, 'num pruning epochs', int representing the
-                    number of epochs to prune for, and 'final sparsity', float
+                    between prunes, 'num_pruning_epochs', int representing the
+                    number of epochs to prune for, and 'final_sparsity', float
                     representing how sparse the final net should be
     cluster_gradient: bool representing whether or not to apply the
                       clusterability gradient
