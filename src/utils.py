@@ -191,3 +191,13 @@ def daniel_hash(string):
     """
     hex_hash = hashlib.sha256(str.encode(string)).hexdigest()
     return int(hex_hash[-8:], 16)
+
+
+def print_network_weights(net):
+    """
+    Print out the weights of a network. Probably only use when the
+    network is small.
+    net: Pytorch neural network, inherits from nn.Module
+    """
+    for param_tensor in net.state_dict():
+        print(param_tensor, "\t", net.state_dict()[param_tensor])
