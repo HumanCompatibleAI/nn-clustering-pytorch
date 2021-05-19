@@ -25,6 +25,3 @@ NB: the codebase assumes that networks are defined in a very specific way:
 - There can only be one batch norm module between two linear transformations.
 
 For examples of networks that meet these specifications, see `src/train_model.py`.
-
-TODO: Write function to test whether network def complies with format.
-TODO: use torch.autograd.gradcheck to see if I'm calculating clust grad right
