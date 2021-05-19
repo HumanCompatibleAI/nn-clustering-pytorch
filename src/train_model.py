@@ -14,6 +14,7 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
+from tiny_dataset import TinyDataset
 from utils import (
     get_weight_modules_from_live_net,
     size_and_multiply_np,
@@ -55,7 +56,7 @@ def mlp_config():
         'num_eigs': 3,
         'lambda': 1e-3,
         'frequency': 20,
-        'normalize': True
+        'normalize': False
     }
     save_path_prefix = (model_dir + net_type + '_' + dataset +
                         cluster_gradient * '_clust-grad')
@@ -76,14 +77,17 @@ def load_datasets(dataset, batch_size):
     """
     get loaders for training datasets, as well as a description of the classes.
     dataset: string representing the dataset.
+    batch_size: int for how many things should be in a batch
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
-    assert dataset in ['kmnist', 'cifar10']
+    assert dataset in ['kmnist', 'cifar10', 'tiny_dataset']
     if dataset == 'kmnist':
         return load_kmnist(batch_size)
     elif dataset == 'cifar10':
         return load_cifar10(batch_size)
+    elif dataset == 'tiny_dataset':
+        return load_tiny_dataset(batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
 
@@ -134,6 +138,19 @@ def load_cifar10(batch_size):
     return train_loader, test_loader, classes
 
 
+def load_tiny_dataset(batch_size):
+    train_set = TinyDataset()
+    train_loader = torch.utils.data.DataLoader(train_set,
+                                               batch_size=batch_size,
+                                               shuffle=False)
+    test_set = TinyDataset()
+    test_loader = torch.utils.data.DataLoader(test_set,
+                                              batch_size=batch_size,
+                                              shuffle=False)
+    classes = ("0", "1")
+    return train_loader, test_loader, classes
+
+
 class SmallMLP(nn.Module):
     """
     A simple MLP, likely not very competitive
@@ -160,7 +177,22 @@ class SmallMLP(nn.Module):
         return x
 
 
-mlp_dict = {'small': SmallMLP}
+class TinyMLP(nn.Module):
+    """
+    A tiny MLP used for debugging. Use with a fake tiny dataset.
+    """
+    def __init__(self):
+        super(TinyMLP, self).__init__()
+        self.layer1 = nn.ModuleDict({"fc": nn.Linear(3, 3)})
+        self.layer2 = nn.ModuleDict({"fc": nn.Linear(3, 2)})
+
+    def forward(self, x):
+        x = F.relu(self.layer1["fc"](x))
+        x = self.layer2["fc"](x)
+        return x
+
+
+mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP}
 
 
 class SmallCNN(nn.Module):
@@ -571,7 +603,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
     prune_params_list = [(mod, 'weight') for mod in prune_modules_list]
 
     for epoch in range(num_epochs):
-        print("Start of epoch", epoch)
+        print("\nStart of epoch", epoch)
         network.train()
         running_loss = 0.0
         for i, data in enumerate(train_loader):
