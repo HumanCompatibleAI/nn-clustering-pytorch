@@ -217,14 +217,14 @@ def calculate_clust_reg(cluster_gradient_config, net_type, network):
 def normalize_weights(network, eps=1e-3):
     """
     'Normalize' the weights of a network, so that for each hidden neuron, the
-    norm of incoming weights to that neuron is sqrt(2). For a ReLU network,
-    this operation preserves network functionality.
+    norm of incoming weights to that neuron is sqrt(2), dividing the outputs
+    of that neuron by the factor that the inputs were multiplied by. For a ReLU
+    network, this operation preserves network functionality.
     network: a neural network. has to inherit from torch.nn.module. Currently
              probably has to be an MLP
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
     """
-    # TODO: figure out whether I should be normalizing BN layers
     layers = get_weight_modules_from_live_net(network)
     for idx in range(len(layers) - 1):
         this_layer = layers[idx]
@@ -264,13 +264,11 @@ def normalize_weights(network, eps=1e-3):
         scales += eps
         scales = torch.from_numpy(scales)
         scales_rows = torch.unsqueeze(scales, 1)
-        for i in range(len(inc_raw_weights.shape)):
-            if i > 1:
-                scales_rows = torch.unsqueeze(scales_rows, i)
+        for i in range(2, len(inc_raw_weights.shape)):
+            scales_rows = torch.unsqueeze(scales_rows, i)
         scales_mul = vector_stretch(scales, outgoing_weights.shape[1])
-        for i in range(len(outgoing_weights.shape) - 1):
-            if i > 0:
-                scales_mul = torch.unsqueeze(scales_mul, i)
+        for i in range(1, len(outgoing_weights.shape) - 1):
+            scales_mul = torch.unsqueeze(scales_mul, i)
 
         incoming_weights_unpruned = True
         incoming_biases_unpruned = True
