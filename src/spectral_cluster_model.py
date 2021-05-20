@@ -24,6 +24,7 @@ def basic_config():
     num_clusters = 4
     weights_path = "./models/mlp_kmnist.pth"
     net_type = 'mlp'
+    normalize_weights = True
     epsilon = 1e-9
     eigen_solver = 'arpack'
     _ = locals()
@@ -103,7 +104,8 @@ def adj_mat_to_clustering_and_quality(adj_mat, num_clusters, eigen_solver,
 
 
 def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
-                                          eigen_solver, epsilon):
+                                          eigen_solver, normalize_weights,
+                                          epsilon):
     """
     Take an array of weight tensors, delete any isolated connected components,
     cluster the resulting graph, and get the n-cut and the clustering.
@@ -112,12 +114,14 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
     num_clusters: integer number of desired clusters
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
+    normalize_weights: bool specifying whether the weights should be
+                       'normalized' before clustering.
     epsilon: small positive number to stop us dividing by zero
     returns: tuple containing n-cut and array of cluster labels
     """
     weights_array = np_layer_array_to_graph_weights_array(
         layer_array, net_type)
-    adj_mat = weights_to_graph(weights_array)
+    adj_mat = weights_to_graph(weights_array, normalize_weights)
     weights_array_, adj_mat_, _, _ = delete_isolated_ccs(
         weights_array, adj_mat)
     result = adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
@@ -127,7 +131,7 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
 
 @clust_exp.automain
 def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
-                   epsilon):
+                   normalize_weights, epsilon):
     """
     load saved weights, delete any isolated connected components, cluster them,
     get their n-cut and the clustering
@@ -136,6 +140,8 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
+    normalize_weights: bool specifying whether the weights should be
+                       'normalized' before clustering.
     epsilon: small positive number to stop us dividing by zero
     returns: tuple containing n-cut and array of cluster labels
     """
@@ -144,4 +150,4 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
     layer_array = load_model_weights_pytorch(weights_path, device)
     return layer_array_to_clustering_and_quality(layer_array, net_type,
                                                  num_clusters, eigen_solver,
-                                                 epsilon)
+                                                 normalize_weights, epsilon)
