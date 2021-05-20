@@ -9,6 +9,7 @@ from sklearn.cluster import SpectralClustering
 
 from graph_utils import (
     delete_isolated_ccs,
+    normalize_weights_array,
     np_layer_array_to_graph_weights_array,
     weights_to_graph,
 )
@@ -121,9 +122,10 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
     """
     weights_array = np_layer_array_to_graph_weights_array(
         layer_array, net_type)
-    adj_mat = weights_to_graph(weights_array, normalize_weights)
-    weights_array_, adj_mat_, _, _ = delete_isolated_ccs(
-        weights_array, adj_mat)
+    if normalize_weights:
+        weights_array = normalize_weights_array(weights_array)
+    adj_mat = weights_to_graph(weights_array)
+    _, adj_mat_, _, _ = delete_isolated_ccs(weights_array, adj_mat)
     result = adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
                                                eigen_solver, epsilon)
     return result

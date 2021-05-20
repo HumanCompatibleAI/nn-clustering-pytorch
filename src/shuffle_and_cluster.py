@@ -6,15 +6,7 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
-from graph_utils import (
-    delete_isolated_ccs,
-    np_layer_array_to_graph_weights_array,
-    weights_to_graph,
-)
-from spectral_cluster_model import (
-    adj_mat_to_clustering_and_quality,
-    layer_array_to_clustering_and_quality,
-)
+from spectral_cluster_model import layer_array_to_clustering_and_quality
 from utils import (
     compute_percentile,
     get_random_int_time,
@@ -32,6 +24,7 @@ def basic_config():
     weights_path = "./models/mlp_kmnist.pth"
     net_type = 'mlp'
     shuffle_method = "all"
+    normalize_weights = True
     epsilon = 1e-9
     num_samples = 100
     eigen_solver = 'arpack'
@@ -92,7 +85,8 @@ def shuffle_layer_array(shuffle_func, layer_array):
 
 
 def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
-                        eigen_solver, epsilon, shuffle_method, seed_int):
+                        eigen_solver, normalize_weights, epsilon,
+                        shuffle_method, seed_int):
     """
     shuffles a weights array a number of times, then finds the n-cut of each
     shuffle.
@@ -102,6 +96,8 @@ def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
     num_clusters: an int for the number of clusters to cluster into.
     eigen_solver: a string or None specifying which eigenvector solver spectral
                   clustering should use.
+    normalize_weights: bool specifying whether the weights should be
+                       'normalized' before clustering.
     epsilon: a small positive float for stopping us from dividing by zero.
     seed_int: an integer to set the numpy random seed to determine the
               shufflings.
@@ -117,21 +113,21 @@ def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
         shuffled_layer_array = shuffle_layer_array(shuffle_func, layer_array)
         n_cut, _ = layer_array_to_clustering_and_quality(
             shuffled_layer_array, net_type, num_clusters, eigen_solver,
-            epsilon)
+            normalize_weights, epsilon)
         n_cuts.append(n_cut)
     return n_cuts
 
 
 @shuffle_and_clust.automain
 def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
-                   num_samples, shuffle_method):
+                   num_samples, shuffle_method, normalize_weights):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
     connected components.
-    NB: if the main net has isolated connected components, those neurons might
-    gain connections when the net is shuffled (unlike in Clusterability in
-    Neural Networks arXiv:2103.03386)
+    NB: if the main net has isolated connected components, those neurons will
+    likely gain connections when the net is shuffled (unlike in Clusterability
+    in Neural Networks arXiv:2103.03386)
     weights_path: path to where weights are saved. String suffices.
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
@@ -140,6 +136,8 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     epsilon: small positive number to stop us dividing by zero
     num_samples: how many shuffles to compare against
     shuffle_method: string indicating how to shuffle the network
+    normalize_weights: bool specifying whether the weights should be
+                       'normalized' before clustering.
     returns: dict containing 'true n-cut', a float, 'num samples', an int,
              'mean', a float representing the mean shuffled n-cut,
              'stdev', a float representing the standard deviation of the
@@ -152,16 +150,13 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     layer_array = load_model_weights_pytorch(weights_path, device)
-    weights_array_ = np_layer_array_to_graph_weights_array(
-        layer_array, net_type)
-    adj_mat_ = weights_to_graph(weights_array_)
-    weights_array, adj_mat, _, _ = delete_isolated_ccs(weights_array_,
-                                                       adj_mat_)
-    true_n_cut, _ = adj_mat_to_clustering_and_quality(adj_mat, num_clusters,
-                                                      eigen_solver, epsilon)
+    true_n_cut, _ = layer_array_to_clustering_and_quality(
+        layer_array, net_type, num_clusters, eigen_solver, normalize_weights,
+        epsilon)
     time_int = get_random_int_time()
     shuffled_n_cuts = shuffle_and_cluster(num_samples, layer_array, net_type,
-                                          num_clusters, eigen_solver, epsilon,
+                                          num_clusters, eigen_solver,
+                                          normalize_weights, epsilon,
                                           shuffle_method, time_int)
 
     shuff_mean = np.mean(shuffled_n_cuts)

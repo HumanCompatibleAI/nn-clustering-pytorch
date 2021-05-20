@@ -90,7 +90,7 @@ def invert_deleted_neurons_np(tens, rows_deleted, cols_deleted):
     return tens
 
 
-def weights_to_graph(weights_array, normalize_weights=False):
+def weights_to_graph(weights_array):
     """
     Take in an array of weight matrices, and return the adjacency matrix of the
     MLP that array defines.
@@ -110,8 +110,6 @@ def weights_to_graph(weights_array, normalize_weights=False):
                        symmetry.
     Returns a sparse CSR matrix representing the adjacency matrix
     """
-    if normalize_weights:
-        weights_array = normalize_weights_array(weights_array)
     # strategy: form the lower diagonal, then transpose to get the upper diag.
     # block_mat is an array of arrays of matrices that is going to be turned
     # into a big sparse matrix in the obvious way.
