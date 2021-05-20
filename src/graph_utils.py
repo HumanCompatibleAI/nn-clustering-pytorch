@@ -90,7 +90,7 @@ def invert_deleted_neurons_np(tens, rows_deleted, cols_deleted):
     return tens
 
 
-def weights_to_graph(weights_array):
+def weights_to_graph(weights_array, normalize_weights=False):
     """
     Take in an array of weight matrices, and return the adjacency matrix of the
     MLP that array defines.
@@ -104,8 +104,14 @@ def weights_to_graph(weights_array):
     This is because pytorch weights have index 0 for out_{features, channels}
     and index 1 for in_{features, channels}.
     weights_array: An array of 2d numpy arrays.
+    normalize_weights: Boolean indicating whether we should 'normalize' the
+                       network before turning it into a graph, in order to
+                       equate networks that differ only by the ReLU scaling
+                       symmetry.
     Returns a sparse CSR matrix representing the adjacency matrix
     """
+    if normalize_weights:
+        weights_array = normalize_weights_array(weights_array)
     # strategy: form the lower diagonal, then transpose to get the upper diag.
     # block_mat is an array of arrays of matrices that is going to be turned
     # into a big sparse matrix in the obvious way.
@@ -177,3 +183,37 @@ def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
                                              my_weights, eps)
         weights_array.append(my_weights)
     return weights_array
+
+
+def normalize_weights_array(weights_array, eps=1e-5):
+    """
+    'Normalize' the weights of a network, so that for each hidden neuron, the
+    norm of incoming weights to that neuron is 1. This is done by taking the
+    norm x of the incoming weights, dividing all incoming weights by x, and
+    then multiplying the outgoing weights of that neuron by x. For a ReLU
+    network, this operation preserves network functionality.
+    weights_array: array of numpy ndarrays, representing the weights of the
+                   network
+    eps: small positive number to ensure we never divide by 0.
+    """
+    new_array = []
+    for x in weights_array:
+        new_array.append(np.copy(x))
+    for idx in range(len(new_array) - 1):
+        this_layer = new_array[idx]
+        next_layer = new_array[idx + 1]
+        num_neurons = this_layer.shape[0]
+        assert next_layer.shape[1] == num_neurons, "shapes don't match!"
+        # TODO: flatten this_layer when finding norms
+        this_layer_flat = this_layer.reshape(num_neurons, -1)
+        scales = np.linalg.norm(this_layer_flat, axis=1)
+        scales += eps
+        scales_rows = np.expand_dims(scales, 1)
+        for i in range(2, len(this_layer.shape)):
+            scales_rows = np.expand_dims(scales_rows, i)
+        scales_mul = scales
+        for i in range(1, len(next_layer.shape) - 1):
+            scales_mul = np.expand_dims(scales_mul, i)
+        new_array[idx] = np.divide(this_layer, scales_rows)
+        new_array[idx + 1] = np.multiply(next_layer, scales)
+    return new_array
