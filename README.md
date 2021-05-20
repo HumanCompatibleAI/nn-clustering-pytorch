@@ -1,6 +1,8 @@
 # nn-clustering-pytorch
 Checking the divisibility of neural networks, and investigating the nature of the pieces networks can be divided into.
 
+NOTE: this code is still under active development. Use at your own peril.
+
 Things this codebase can do:
 
 - Train a neural network using gradient descent and pruning. The neural network can have convolutions, fully-connected layers, batch norm, dropout, and max pooling, as long as it uses only ReLU activations. This is done in `src/train_model.py`.
