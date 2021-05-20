@@ -215,5 +215,5 @@ def normalize_weights_array(weights_array, eps=1e-5):
         for i in range(1, len(next_layer.shape) - 1):
             scales_mul = np.expand_dims(scales_mul, i)
         new_array[idx] = np.divide(this_layer, scales_rows)
-        new_array[idx + 1] = np.multiply(next_layer, scales)
+        new_array[idx + 1] = np.multiply(next_layer, scales_mul)
     return new_array
