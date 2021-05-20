@@ -15,6 +15,8 @@ After cloning, enter the pipenv by running `pipenv shell`. To install dependenci
 - if you don't want to contribute to development, just run `pipenv install`.
 - if you do want to contribute to development, install dependencies by running `pipenv install -d`, then install pre-commit hooks for `yapf`, `isort`, and `flake8` by running `pre-commit install`.
 
+You should also probably create directories where results will be saved: `datasets`, `models`, `training_runs`, `clustering_runs`, and `shuffle_clust_runs`.
+
 This codebase uses `sacred` extensively, which you can read about [here](https://sacred.readthedocs.io/en/stable/).
 
 NB: the codebase assumes that networks are defined in a very specific way:
