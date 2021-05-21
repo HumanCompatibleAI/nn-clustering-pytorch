@@ -57,8 +57,11 @@ def mlp_config():
         'frequency': 20,
         'normalize': False
     }
+    training_run_string = ""
+    save_path_end = (("_" + training_run_string)
+                     if training_run_string != "" else "")
     save_path_prefix = (model_dir + net_type + '_' + dataset +
-                        cluster_gradient * '_clust-grad')
+                        cluster_gradient * '_clust-grad' + save_path_end)
     # TODO: figure out what info should go in here.
     _ = locals()
     del _
