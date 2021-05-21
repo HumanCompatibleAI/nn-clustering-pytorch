@@ -80,8 +80,10 @@ def load_datasets(dataset, batch_size):
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
-    assert dataset in ['kmnist', 'cifar10', 'tiny_dataset']
-    if dataset == 'kmnist':
+    assert dataset in ['mnist', 'kmnist', 'cifar10', 'tiny_dataset']
+    if dataset == 'mnist':
+        return load_mnist(batch_size)
+    elif dataset == 'kmnist':
         return load_kmnist(batch_size)
     elif dataset == 'cifar10':
         return load_cifar10(batch_size)
@@ -89,6 +91,29 @@ def load_datasets(dataset, batch_size):
         return load_tiny_dataset(batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
+
+
+def load_mnist(batch_size):
+    transform = transforms.Compose(
+        [transforms.ToTensor(),
+         transforms.Normalize([0.1307], [0.3081])])
+    train_set = torchvision.datasets.MNIST(root="./datasets",
+                                           train=True,
+                                           download=True,
+                                           transform=transform)
+    train_loader = torch.utils.data.DataLoader(train_set,
+                                               batch_size=batch_size,
+                                               shuffle=True)
+    test_set = torchvision.datasets.MNIST(root="./datasets",
+                                          train=False,
+                                          download=True,
+                                          transform=transform)
+    test_loader = torch.utils.data.DataLoader(test_set,
+                                              batch_size=batch_size,
+                                              shuffle=True)
+    classes = ('0 - zero', '1 - one', '2 - two', '3 - three', '4 - four',
+               '5 - five', '6 - six', '7 - seven', '8 - eight', '9 - nine')
+    return (train_loader, test_loader, classes)
 
 
 def load_kmnist(batch_size):
@@ -400,14 +425,13 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
             optimizer.zero_grad()
             outputs = network(inputs)
             loss = criterion(outputs, labels)
-            if cluster_gradient:
-                if i % cluster_gradient_config['frequency'] == 0:
-                    if cluster_gradient_config['normalize']:
-                        normalize_weights(network)
-                    clust_reg_term = calculate_clust_reg(
-                        cluster_gradient_config, net_type, network)
-                    loss += (clust_reg_term *
-                             cluster_gradient_config['frequency'])
+            if (cluster_gradient
+                    and i % cluster_gradient_config['frequency'] == 0):
+                if cluster_gradient_config['normalize']:
+                    normalize_weights(network)
+                clust_reg_term = calculate_clust_reg(cluster_gradient_config,
+                                                     net_type, network)
+                loss += (clust_reg_term * cluster_gradient_config['frequency'])
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
