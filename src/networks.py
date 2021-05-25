@@ -191,10 +191,10 @@ class CIFAR10_CNN(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.layer1["conv"](x))
-        x = F.relu(self.layer2["bn"](self.layer2["conv"](x)))
+        x = F.relu(self.layer2["conv"](x))
         x = self.layer2["maxPool"](x)
         x = F.relu(self.layer3["conv"](x))
-        x = F.relu(self.layer4["bn"](self.layer4["conv"](x)))
+        x = F.relu(self.layer4["conv"](x))
         x = self.layer4["maxPool"](x)
         x = x.view(-1, self.num_flat_features(x))
         x = self.layer5["drop"](F.relu(self.layer5["fc"](x)))
