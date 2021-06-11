@@ -69,10 +69,10 @@ for dataset in ['cifar10', 'mnist', 'kmnist']:
                                   1 if pruning else pruning_start - 1)
                     test_acc = metrics['test.accuracy']['values'][read_index]
                     test_loss = metrics['test.loss']['values'][read_index]
-                    with open(results_path, 'w', newline='') as f:
+                    with open(results_path, 'a', newline='') as f:
                         writer = csv.writer(f, delimiter=',')
                         writer.writerow([
-                            dataset, model_type, cg_lambda, pruning,
+                            dataset, model_type, cg_lambda, pruning, i,
                             clust_dict['true n-cut'], clust_dict['mean'],
                             clust_dict['stdev'], clust_dict['percentile'],
                             clust_dict['z-score'], test_acc, test_loss
