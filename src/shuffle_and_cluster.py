@@ -109,7 +109,8 @@ def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
                     shuffle_weight_tensor_nonzero)
     np.random.seed(seed_int)
     n_cuts = []
-    for _ in range(num_samples):
+    for i in range(num_samples):
+        print("shuffle ", i)
         shuffled_layer_array = shuffle_layer_array(shuffle_func, layer_array)
         n_cut, _ = layer_array_to_clustering_and_quality(
             shuffled_layer_array, net_type, num_clusters, eigen_solver,
