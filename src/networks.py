@@ -226,7 +226,7 @@ class CIFAR10_VGG(nn.Module):
                                         ("2_relu", nn.ReLU()),
                                         ("3_fc", nn.Linear(512, 10))])
         self.fc_classifier = nn.Sequential(self.fc_ord_dict)
-        if self.init_weights:
+        if init_weights:
             self._initialize_weights()
 
     def forward(self, x):
