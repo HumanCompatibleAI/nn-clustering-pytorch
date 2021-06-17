@@ -33,17 +33,33 @@ def get_weight_modules_from_live_net(network):
     for layer_name, layer_mod in network.named_children():
         if isinstance(layer_mod, torch.nn.ModuleDict):
             layer_dict = {'layer': layer_name}
-            for mod_name, module in layer_mod.named_children():
-                if mod_name == 'fc' and isinstance(module, torch.nn.Linear):
+            for module in layer_mod.children():
+                if isinstance(module, torch.nn.Linear):
                     layer_dict['fc_mod'] = module
-                if mod_name == 'conv' and isinstance(module, torch.nn.Conv2d):
+                if isinstance(module, torch.nn.Conv2d):
                     layer_dict['conv_mod'] = module
-                if (mod_name == 'bn'
-                        and (isinstance(module, torch.nn.BatchNorm2d)
-                             or isinstance(module, torch.nn.BatchNorm1d))):
+                if (isinstance(module, torch.nn.BatchNorm2d)
+                        or isinstance(module, torch.nn.BatchNorm1d)):
                     layer_dict['bn_mod'] = module
             if len(layer_dict) > 1:
                 layer_array.append(layer_dict)
+        elif isinstance(layer_mod, torch.nn.Sequential):
+            sequential_array = []
+            for mod_name, module in layer_mod.named_children():
+                if (isinstance(module, torch.nn.Linear)
+                        or isinstance(module, torch.nn.Conv2d)):
+                    name_split = mod_name.split('_')
+                    my_name = layer_name + name_split[0]
+                    layer_dict = {'layer': my_name}
+                    if isinstance(module, torch.nn.Linear):
+                        layer_dict['fc_mod'] = module
+                    else:
+                        layer_dict['fc_mod'] = module
+                    sequential_array.append(layer_dict)
+                if (isinstance(module, torch.nn.BatchNorm2d)
+                        or isinstance(module, torch.nn.BatchNorm1d)):
+                    sequential_array[-1]['bn_mod'] = module
+            layer_array += sequential_array
     check_layer_names(layer_array)
     return layer_array
 
@@ -70,6 +86,10 @@ def get_weight_tensors_from_state_dict(state_dict):
         new_layer_name = name_parts[0]
         module_name = name_parts[1]
         attr_name = name_parts[2]
+        if '_' in module_name:
+            module_name_parts = module_name.split('_')
+            new_layer_name += module_name_parts[0]
+            module_name = module_name_parts[-1]
         old_layer = (bool(layer_array)
                      and layer_array[-1]['layer'] == new_layer_name)
         if module_name == "fc" and attr_name == "weight" and not old_layer:
