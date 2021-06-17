@@ -54,7 +54,7 @@ def get_weight_modules_from_live_net(network):
                     if isinstance(module, torch.nn.Linear):
                         layer_dict['fc_mod'] = module
                     else:
-                        layer_dict['fc_mod'] = module
+                        layer_dict['conv_mod'] = module
                     sequential_array.append(layer_dict)
                 if (isinstance(module, torch.nn.BatchNorm2d)
                         or isinstance(module, torch.nn.BatchNorm1d)):
