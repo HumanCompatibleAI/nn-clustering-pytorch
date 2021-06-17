@@ -1,4 +1,5 @@
 import math
+from collections import OrderedDict
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -96,12 +97,12 @@ class SmallCNN(nn.Module):
 
 
 # TODO: pass in layer widths etc.
-class CIFAR10_BN_CNN(nn.Module):
+class CIFAR10_BN_CNN_6(nn.Module):
     """
     A 6-layer CNN using batch norm, sized for CIFAR-10
     """
     def __init__(self):
-        super(CIFAR10_BN_CNN, self).__init__()
+        super(CIFAR10_BN_CNN_6, self).__init__()
         # see README for why this is structured weirdly
         self.hidden1 = 64
         self.hidden2 = 128
@@ -153,12 +154,12 @@ class CIFAR10_BN_CNN(nn.Module):
         return math.prod(size)
 
 
-class CIFAR10_CNN(nn.Module):
+class CIFAR10_CNN_6(nn.Module):
     """
     A 6-layer CNN sized for CIFAR-10
     """
     def __init__(self):
-        super(CIFAR10_CNN, self).__init__()
+        super(CIFAR10_CNN_6, self).__init__()
         # see README for why this is structured weirdly
         self.hidden1 = 64
         self.hidden2 = 128
@@ -206,10 +207,135 @@ class CIFAR10_CNN(nn.Module):
         return math.prod(size)
 
 
+class CIFAR10_VGG(nn.Module):
+    """
+    Code to generate VGGs for CIFAR-10 (together with make_layers). Modified
+    from
+    https://github.com/chengyangfu/pytorch-vgg-cifar10/blob/master/vgg.py
+    as well as
+    https://github.com/pytorch/vision/blob/master/torchvision/models/vgg.py
+    """
+    def __init__(self, conv_features, init_weights=True):
+        super(CIFAR10_VGG, self).__init__()
+        self.conv_features = conv_features
+        self.fc_ord_dict = OrderedDict([("0_dropout", nn.Dropout()),
+                                        ("1_fc", nn.Linear(512, 512)),
+                                        ("1_relu", nn.ReLU()),
+                                        ("1_dropout", nn.Dropout()),
+                                        ("2_fc", nn.Linear(512, 512)),
+                                        ("2_relu", nn.ReLU()),
+                                        ("3_fc", nn.Linear(512, 10))])
+        self.fc_classifier = nn.Sequential(self.fc_ord_dict)
+        if self.init_weights:
+            self._initialize_weights()
+
+    def forward(self, x):
+        x = self.conv_features(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc_classifier(x)
+        return x
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight,
+                                        mode='fan_out',
+                                        nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.BatchNorm2d):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.Linear):
+                    nn.init.normal(m.weight, 0, 0.01)
+                    nn.init.constant(m.bias, 0)
+
+
+def make_layers(cfg, batch_norm=False):
+    layers = OrderedDict()
+    in_channels = 3
+    for i, v in enumerate(cfg):
+        if v == 'M':
+            layers[f"{i}_maxPool"] = nn.MaxPool2d(kernel_size=2, stride=2)
+        else:
+            layers[f"{i}_conv"] = nn.Conv2d(in_channels,
+                                            v,
+                                            kernel_size=3,
+                                            padding=1)
+            if batch_norm:
+                layers[f"{i}_bn"] = nn.BatchNorm2d(v)
+            layers[f"{i}_relu"] = nn.ReLU()
+            in_channels = v
+    return nn.Sequential(layers)
+
+
+cfg = {
+    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'B':
+    [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'D': [
+        64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M',
+        512, 512, 512, 'M'
+    ],
+    'E': [
+        64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512,
+        512, 'M', 512, 512, 512, 512, 'M'
+    ],
+}
+
+
+def cifar10_vgg11():
+    """VGG 11-layer model (configuration "A")"""
+    return CIFAR10_VGG(make_layers(cfg['A']))
+
+
+def cifar10_vgg11_bn():
+    """VGG 11-layer model (configuration "A") with batch normalization"""
+    return CIFAR10_VGG(make_layers(cfg['A'], batch_norm=True))
+
+
+def cifar10_vgg13():
+    """VGG 13-layer model (configuration "B")"""
+    return CIFAR10_VGG(make_layers(cfg['B']))
+
+
+def cifar10_vgg13_bn():
+    """VGG 13-layer model (configuration "B") with batch normalization"""
+    return CIFAR10_VGG(make_layers(cfg['B'], batch_norm=True))
+
+
+def cifar10_vgg16():
+    """VGG 16-layer model (configuration "D")"""
+    return CIFAR10_VGG(make_layers(cfg['D']))
+
+
+def cifar10_vgg16_bn():
+    """VGG 16-layer model (configuration "D") with batch normalization"""
+    return CIFAR10_VGG(make_layers(cfg['D'], batch_norm=True))
+
+
+def cifar10_vgg19():
+    """VGG 19-layer model (configuration "E")"""
+    return CIFAR10_VGG(make_layers(cfg['E']))
+
+
+def cifar10_vgg19_bn():
+    """VGG 19-layer model (configuration 'E') with batch normalization"""
+    return CIFAR10_VGG(make_layers(cfg['E'], batch_norm=True))
+
+
 mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP}
 
 cnn_dict = {
-    'cifar10_bn': CIFAR10_BN_CNN,
-    'cifar10': CIFAR10_CNN,
-    'small': SmallCNN
+    'cifar10_6_bn': CIFAR10_BN_CNN_6,
+    'cifar10_6': CIFAR10_CNN_6,
+    'small': SmallCNN,
+    'cifar10_vgg11': cifar10_vgg11,
+    'cifar10_vgg11_bn': cifar10_vgg11_bn,
+    'cifar10_vgg13': cifar10_vgg13,
+    'cifar10_vgg13_bn': cifar10_vgg13_bn,
+    'cifar10_vgg16': cifar10_vgg16,
+    'cifar10_vgg16_bn': cifar10_vgg16_bn,
+    'cifar10_vgg19': cifar10_vgg19,
+    'cifar10_vgg19_bn': cifar10_vgg19_bn
 }
