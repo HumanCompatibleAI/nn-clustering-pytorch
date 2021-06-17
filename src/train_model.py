@@ -57,6 +57,11 @@ def mlp_config():
         'frequency': 20,
         'normalize': False
     }
+    optim_func = 'adam'
+    optim_kwargs = {}
+    decay_lr = False
+    decay_lr_factor = 1
+    decay_lr_epochs = 1
     training_run_string = ""
     save_path_end = (("_" + training_run_string)
                      if training_run_string != "" else "")
@@ -142,21 +147,25 @@ def load_kmnist(batch_size):
 
 
 def load_cifar10(batch_size):
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
-    train_set = torchvision.datasets.CIFAR10(root="./datasets",
-                                             train=True,
-                                             download=True,
-                                             transform=transform)
+    normalize = transforms.Normalize((0.485, 0.456, 0.406),
+                                     (0.229, 0.224, 0.225))
+    train_set = torchvision.datasets.CIFAR10(
+        root="./datasets",
+        train=True,
+        download=True,
+        transform=transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4),
+            transforms.ToTensor(), normalize
+        ]))
     train_loader = torch.utils.data.DataLoader(train_set,
                                                batch_size=batch_size,
                                                shuffle=True)
-    test_set = torchvision.datasets.CIFAR10(root="./datasets",
-                                            train=False,
-                                            download=True,
-                                            transform=transform)
+    test_set = torchvision.datasets.CIFAR10(
+        root="./datasets",
+        train=False,
+        download=True,
+        transform=transforms.Compose([transforms.ToTensor(), normalize]))
     test_loader = torch.utils.data.DataLoader(test_set,
                                               batch_size=batch_size,
                                               shuffle=True)
@@ -361,19 +370,23 @@ def get_prunable_modules(network):
     return prunable_modules
 
 
-def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
-                   pruning_config, cluster_gradient, cluster_gradient_config,
-                   optimizer, criterion, log_interval, device,
-                   model_path_prefix, _run):
+@train_exp.capture
+def train_and_save(network, optimizer, criterion, train_loader, test_loader,
+                   device, num_epochs, net_type, pruning_config,
+                   cluster_gradient, cluster_gradient_config, decay_lr,
+                   log_interval, save_path_prefix, _run):
     """
     Train a neural network, printing out log information, and saving along the
     way.
     network: an instantiated object that inherits from nn.Module or something.
-    net_type: string indicating whether the net is an MLP or a CNN
+    optimizer: pytorch optimizer. Might be SGD or Adam.
+    criterion: loss function.
     train_loader: pytorch loader for the training dataset
     test_loader: pytorch loader for the testing dataset
+    device: pytorch device - do things go on CPU or GPU?
     num_epochs: int for the total number of epochs to train for (including any
                 pruning)
+    net_type: string indicating whether the net is an MLP or a CNN
     pruning_config: dict containing 'exponent', a numeric type, 'frequency',
                     int representing the number of training steps to have
                     between prunes, 'num_pruning_epochs', int representing the
@@ -391,12 +404,11 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                              the number of iterations between successive
                              applications of the term. Only accessed if
                              cluster_gradient is True.
-    optimizer: pytorch optimizer. Might be SGD or Adam.
-    criterion: loss function.
+    decay_lr: bool representing whether or not to decay the learning rate over
+              training.
     log_interval: int. how many training steps between logging infodumps.
-    device: pytorch device - do things go on CPU or GPU?
-    model_path_prefix: string containing the relative path to save the model.
-                       should not include final '.pth' suffix.
+    save_path_prefix: string containing the relative path to save the model.
+                      should not include final '.pth' suffix.
     returns: tuple of test acc, test loss, and list of tuples of
              (epoch number, iteration number, train loss)
     """
@@ -421,8 +433,11 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
 
     for epoch in range(num_epochs):
         print("\nStart of epoch", epoch)
+        if decay_lr:
+            decay_learning_rate(optimizer, epoch)
         network.train()
         running_loss = 0.0
+
         for i, data in enumerate(train_loader):
             inputs, labels = data[0].to(device), data[1].to(device)
             optimizer.zero_grad()
@@ -438,6 +453,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+
             if i % log_interval == log_interval - 1:
                 avg_loss = running_loss / log_interval
                 print(f"batch {i}, avg loss {avg_loss}")
@@ -446,6 +462,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
                 _run.log_scalar("training.loss", avg_loss)
                 loss_list.append((epoch, i, avg_loss))
                 running_loss = 0.0
+
             if epoch >= start_pruning_epoch:
                 if train_step_counter % prune_freq == 0:
                     sparsity_factor = calculate_sparsity_factor(
@@ -462,7 +479,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
         print("Test accuracy is", test_acc)
         print("Test loss is", test_loss)
         if is_pruning and epoch == start_pruning_epoch - 1:
-            model_path = model_path_prefix + '_unpruned.pth'
+            model_path = save_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
             train_exp.add_artifact(model_path)
             print("Pre-pruning network saved at " + model_path)
@@ -470,7 +487,7 @@ def train_and_save(network, net_type, train_loader, test_loader, num_epochs,
     if is_pruning:
         for module, name in prune_params_list:
             prune.remove(module, name)
-    save_path = model_path_prefix + '.pth'
+    save_path = save_path_prefix + '.pth'
     torch.save(network.state_dict(), save_path)
     train_exp.add_artifact(save_path)
     print("Network saved at " + save_path)
@@ -510,47 +527,47 @@ def eval_net(network, test_loader, device, criterion, _run):
     return test_accuracy, test_avg_loss
 
 
+@train_exp.capture
+def decay_learning_rate(optimizer, epoch, decay_lr_factor, decay_lr_epochs):
+    """
+    Multiplies the learning rate by decay_lr_factor every decay_lr_epochs
+    epochs.
+    optimizer: pytorch optimizer
+    epoch: int indicating the epoch number
+    decay_lr_factor: float
+    decay_lr_epochs: int
+    """
+    if epoch % decay_lr_epochs == 0 and epoch != 0:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= decay_lr_factor
+
+
 @train_exp.automain
-def run_training(dataset, net_type, net_choice, num_epochs, batch_size,
-                 log_interval, pruning_config, cluster_gradient,
-                 cluster_gradient_config, save_path_prefix, _run):
+def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
     net_type: string indicating whether the model is an MLP or a CNN
     net_choice: string choosing which model to train
-    num_epochs: int
-    batch_size: int
-    log_interval: int. number of iterations to go between logging infodumps
-    pruning_config: dict containing 'exponent', a numeric type, 'frequency',
-                    int representing the number of training steps to have
-                    between prunes, 'num_pruning_epochs', int representing the
-                    number of epochs to prune for, and 'final_sparsity', float
-                    representing how sparse the final net should be
-    cluster_gradient: bool representing whether or not to apply the
-                      clusterability gradient
-    cluster_gradient_config: dict containing 'num_eigs', the int number of
-                             eigenvalues to regularize, 'num_workers', the int
-                             number of CPU workers to use to calculate the
-                             gradient, 'lambda', the float regularization
-                             strength to use per eigenvalue, and 'frequency',
-                             the number of iterations between successive
-                             applications of the term. Only accessed if
-                             cluster_gradient is True.
-    save_path_prefix: string that acts as a prefix for the path where models
-                      will be saved to.
+    optim_func: string specifying whether you're using adam, sgd, etc.
+    optim_kwargs: dict of kwargs that you're passing to the optimizer.
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     criterion = nn.CrossEntropyLoss()
     my_net = (mlp_dict[net_choice]()
               if net_type == 'mlp' else cnn_dict[net_choice]())
-    optimizer = optim.Adam(my_net.parameters())
+    if optim_func == 'adam':
+        optimizer_ = optim.Adam
+    elif optim_func == 'sgd':
+        optimizer_ = optim.SGD
+    else:
+        optimizer_ = optim.SGD
+    optimizer = optimizer_(my_net.parameters(), **optim_kwargs)
     train_loader, test_loader, classes = load_datasets()
-    test_acc, test_loss, loss_list = train_and_save(
-        my_net, net_type, train_loader, test_loader, num_epochs,
-        pruning_config, cluster_gradient, cluster_gradient_config, optimizer,
-        criterion, log_interval, device, save_path_prefix, _run)
+    test_acc, test_loss, loss_list = train_and_save(my_net, optimizer,
+                                                    criterion, train_loader,
+                                                    test_loader, device)
     return {
         'test acc': test_acc,
         'test loss': test_loss,
