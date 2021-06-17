@@ -42,11 +42,13 @@ for clust_grad in [False, True]:
                     'dataset': 'cifar10',
                     'cluster_gradient': clust_grad,
                     'net_type': 'cnn',
-                    'net_choice': 'cifar10',
+                    'net_choice': 'cifar10_6',
                     'num_epochs': 50,
                     'cluster_gradient_config': {
-                        'num_pruning_epochs': 10,
                         'lambda': reg_lambda
+                    },
+                    'pruning_config': {
+                        'num_pruning_epochs': 10
                     },
                     'training_run_string': model_name
                 })
