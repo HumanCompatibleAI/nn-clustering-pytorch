@@ -1,4 +1,3 @@
-import collections
 import hashlib
 import time
 
@@ -77,7 +76,6 @@ def get_weight_tensors_from_state_dict(state_dict):
     returns: an array of dicts containing layer names and various pytorch
              tensors
     """
-    assert isinstance(state_dict, collections.OrderedDict)
     layer_array = []
     for name, tens in state_dict.items():
         # these names look like layer4.fc.weight or layer1.bn.running_var
