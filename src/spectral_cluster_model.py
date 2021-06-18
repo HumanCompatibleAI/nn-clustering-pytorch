@@ -13,7 +13,7 @@ from graph_utils import (
     np_layer_array_to_graph_weights_array,
     weights_to_graph,
 )
-from utils import load_model_weights_pytorch
+from utils import load_masked_weights_pytorch, load_model_weights_pytorch
 
 clust_exp = Experiment('cluster_model')
 clust_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -24,6 +24,7 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 def basic_config():
     num_clusters = 4
     weights_path = "./models/mlp_kmnist.pth"
+    mask_path = None
     net_type = 'mlp'
     normalize_weights = True
     epsilon = 1e-9
@@ -132,12 +133,13 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, num_clusters,
 
 
 @clust_exp.automain
-def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
-                   normalize_weights, epsilon):
+def run_experiment(weights_path, mask_path, net_type, num_clusters,
+                   eigen_solver, normalize_weights, epsilon):
     """
     load saved weights, delete any isolated connected components, cluster them,
     get their n-cut and the clustering
     weights_path: path to where weights are saved. String suffices.
+    mask_path: path to where masks are saved, if any, or None.
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
@@ -149,7 +151,9 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    layer_array = load_model_weights_pytorch(weights_path, device)
+    layer_array = (load_model_weights_pytorch(weights_path, device)
+                   if mask_path is None else load_masked_weights_pytorch(
+                       weights_path, mask_path, device))
     return layer_array_to_clustering_and_quality(layer_array, net_type,
                                                  num_clusters, eigen_solver,
                                                  normalize_weights, epsilon)

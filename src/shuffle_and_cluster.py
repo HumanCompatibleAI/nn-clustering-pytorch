@@ -10,6 +10,7 @@ from spectral_cluster_model import layer_array_to_clustering_and_quality
 from utils import (
     compute_percentile,
     get_random_int_time,
+    load_masked_weights_pytorch,
     load_model_weights_pytorch,
 )
 
@@ -22,6 +23,7 @@ shuffle_and_clust.observers.append(FileStorageObserver('shuffle_clust_runs'))
 def basic_config():
     num_clusters = 4
     weights_path = "./models/mlp_kmnist.pth"
+    mask_path = None
     net_type = 'mlp'
     shuffle_method = "all"
     normalize_weights = True
@@ -120,8 +122,9 @@ def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
 
 
 @shuffle_and_clust.automain
-def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
-                   num_samples, shuffle_method, normalize_weights):
+def run_experiment(weights_path, mask_path, net_type, num_clusters,
+                   eigen_solver, epsilon, num_samples, shuffle_method,
+                   normalize_weights):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
@@ -130,6 +133,8 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     likely gain connections when the net is shuffled (unlike in Clusterability
     in Neural Networks arXiv:2103.03386)
     weights_path: path to where weights are saved. String suffices.
+    mask_path: path to where mask is saved (as a string), or None if no mask is
+               used
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
@@ -150,7 +155,9 @@ def run_experiment(weights_path, net_type, num_clusters, eigen_solver, epsilon,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    layer_array = load_model_weights_pytorch(weights_path, device)
+    layer_array = (load_model_weights_pytorch(weights_path, device)
+                   if mask_path is None else load_masked_weights_pytorch(
+                       weights_path, mask_path, device))
     true_n_cut, _ = layer_array_to_clustering_and_quality(
         layer_array, net_type, num_clusters, eigen_solver, normalize_weights,
         epsilon)
