@@ -19,13 +19,17 @@ You should also probably create directories where results will be saved: `datase
 
 This codebase uses `sacred` extensively, which you can read about [here](https://sacred.readthedocs.io/en/stable/).
 
-NB: the codebase assumes that networks are defined in a very specific way:
+NB: the codebase assumes that networks are defined in a very specific way. The operations must be grouped either into ModuleDicts (see [this pytorch doc page](https://pytorch.org/docs/stable/generated/torch.nn.ModuleDict.html)) or nn.Sequential modules.
 
-- Modules are grouped into ModuleDicts (see [this pytorch doc page](https://pytorch.org/docs/stable/generated/torch.nn.ModuleDict.html)), with one ModuleDict per layer.
-- Names of ModuleDicts can't contain periods.
+For ModuleDicts:
+- One ModuleDict should be used per layer.
 - Batch norm modules must be in the ModuleDict of the linear transform they come after.
 - Within a ModuleDict, fully connected modules should be have the key `'fc'`, convolutional modules should have the key `'conv'`, and batch norm modules should have the key `'bn'`. Nothing else should have those keys.
 - ModuleDicts can't contain both a convolutional and a fully connected module.
-- There can only be one batch norm module between two linear transformations.
 
-For examples of networks that meet these specifications, see `src/train_model.py`.
+For Sequential modules:
+- Sequential modules should be formed by taking in an ordered dict, where keys are names of operations and values are modules.
+- The keys of the ordered dict should be formatted `<name of layer>_<name of module>`, e.g. `0_fc`, `5_conv`, `layer6_relu`. Rules for names of modules are as for ModuleDicts.
+- One layer should contain at most one fully-connected or convolutional module.
+
+In both cases, there can only be one batch norm module between two linear transformations. For examples of networks that meet these specifications, see `src/networks.py`.
