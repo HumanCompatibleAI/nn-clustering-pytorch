@@ -144,7 +144,7 @@ def load_masked_weights_pytorch(model_path, mask_path, pytorch_device):
     mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device)
     assert len(model_layer_array) == len(mask_layer_array)
     new_layer_array = []
-    for i in len(model_layer_array):
+    for i in range(len(model_layer_array)):
         model_dict = model_layer_array[i]
         layer_name = model_dict['layer']
         mask_dict = mask_layer_array[i]
