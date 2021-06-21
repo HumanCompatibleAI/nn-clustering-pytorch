@@ -150,13 +150,13 @@ def load_masked_weights_pytorch(model_path, mask_path, pytorch_device):
         mask_dict = mask_layer_array[i]
         new_dict = {'layer': layer_name}
         for key in model_dict:
-            if key == 'layer':
-                continue
             my_tens = model_dict[key]
             corresp_mask = mask_dict[key]
-            if corresp_mask is not None:
+            if corresp_mask is not None and key != 'layer':
                 np.place(my_tens, np.logical_not(corresp_mask), [0])
-            new_dict[key] = my_tens
+            if key != 'layer':
+                new_dict[key] = my_tens
+        new_layer_array.append(new_dict)
     return new_layer_array
 
 
