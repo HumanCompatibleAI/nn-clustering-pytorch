@@ -171,6 +171,7 @@ def np_layer_array_to_graph_weights_array(np_layer_array, net_type, eps=1e-5):
         if k:
             weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
             break
+
     for layer_dict in weight_layers:
         my_weights = layer_dict[weight_name]
         if 'bn_weights' in layer_dict:
