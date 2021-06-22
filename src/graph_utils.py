@@ -23,8 +23,10 @@ def delete_isolated_ccs(weights_array, adj_mat):
     nc, labels = sparse.csgraph.connected_components(adj_mat, directed=False)
     # if there's only one connected component, don't bother
     empty_del_array = [[] for _ in weights_array]
+    empty_isolation_indicator = [0 for _ in labels]
     if nc == 1:
-        return weights_array, adj_mat, empty_del_array, empty_del_array
+        return (weights_array, adj_mat, empty_del_array, empty_del_array,
+                empty_isolation_indicator)
     widths = weights_to_layer_widths(weights_array)
     cum_sums = np.cumsum(widths)
     cum_sums = np.insert(cum_sums, 0, 0)
@@ -36,7 +38,8 @@ def delete_isolated_ccs(weights_array, adj_mat):
         print("This neural network isn't connected from start to end.")
     # if there aren't isolated ccs, don't bother deleting any
     if not isolated_ccs:
-        return weights_array, adj_mat, empty_del_array, empty_del_array
+        return (weights_array, adj_mat, empty_del_array, empty_del_array,
+                empty_isolation_indicator)
     # go through weights_array, construct new one without rows and cols in
     # isolated clusters
     all_deleted_rows = []
@@ -71,7 +74,10 @@ def delete_isolated_ccs(weights_array, adj_mat):
         new_tensor = np.delete(rows_deleted, cols_to_delete, 1)
         new_weights_array.append(new_tensor)
     new_adj_mat = weights_to_graph(new_weights_array)
-    return new_weights_array, new_adj_mat, all_deleted_rows, all_deleted_cols
+    # get array indicating which neurons are isolated
+    isolation_indicator = [1 if x in isolated_ccs else 0 for x in labels]
+    return (new_weights_array, new_adj_mat, all_deleted_rows, all_deleted_cols,
+            isolation_indicator)
 
 
 def invert_deleted_neurons_np(tens, rows_deleted, cols_deleted):

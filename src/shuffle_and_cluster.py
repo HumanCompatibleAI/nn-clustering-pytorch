@@ -114,9 +114,10 @@ def shuffle_and_cluster(num_samples, layer_array, net_type, num_clusters,
     for i in range(num_samples):
         print("shuffle ", i)
         shuffled_layer_array = shuffle_layer_array(shuffle_func, layer_array)
-        n_cut, _ = layer_array_to_clustering_and_quality(
+        big_tup = layer_array_to_clustering_and_quality(
             shuffled_layer_array, net_type, num_clusters, eigen_solver,
             normalize_weights, epsilon)
+        n_cut = big_tup[0][0]
         n_cuts.append(n_cut)
     return n_cuts
 
@@ -158,9 +159,11 @@ def run_experiment(weights_path, mask_path, net_type, num_clusters,
     layer_array = (load_model_weights_pytorch(weights_path, device)
                    if mask_path is None else load_masked_weights_pytorch(
                        weights_path, mask_path, device))
-    true_n_cut, _ = layer_array_to_clustering_and_quality(
-        layer_array, net_type, num_clusters, eigen_solver, normalize_weights,
-        epsilon)
+    big_tup = layer_array_to_clustering_and_quality(layer_array, net_type,
+                                                    num_clusters, eigen_solver,
+                                                    normalize_weights, epsilon)
+    true_n_cut, labels = big_tup[0]
+    isolation_indicator = big_tup[1]
     time_int = get_random_int_time()
     shuffled_n_cuts = shuffle_and_cluster(num_samples, layer_array, net_type,
                                           num_clusters, eigen_solver,
@@ -178,6 +181,8 @@ def run_experiment(weights_path, mask_path, net_type, num_clusters,
         'mean': shuff_mean,
         'stdev': shuff_stdev,
         'percentile': n_cut_percentile,
-        'z-score': z_score
+        'z-score': z_score,
+        'labels': labels.tolist(),
+        'isolation_indicator': isolation_indicator
     }
     return result

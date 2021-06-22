@@ -222,8 +222,8 @@ class LaplacianEigenvalues(Function):
             tensor_type_array, np_tensor_array, net_type)
         num_layers = len(w_tens_np_array)
         adj_mat_csr = weights_to_graph(w_tens_np_array)
-        (thin_w_array, thin_adj_mat, del_rows,
-         del_cols) = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
+        (thin_w_array, thin_adj_mat, del_rows, del_cols,
+         _) = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
         assert len(del_rows) == num_layers
         assert len(del_cols) == num_layers
         assert len(thin_w_array) == num_layers

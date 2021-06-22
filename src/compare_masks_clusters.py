@@ -24,7 +24,7 @@ def basic_config():
         "/model.pth")
     mask_path = ("./csordas_weights/export/addmul_feedforward_big/b4t2f6os" +
                  "/mask_add.pth")
-    run_json_path = "./shuffle_clust_runs/106/run.json"
+    run_json_path = "./shuffle_clust_runs/109/run.json"
     _ = locals()
     del _
 
@@ -80,7 +80,12 @@ def get_iou_iomin(neuron_indicator, label_array, cluster):
 def get_labels_from_run_json(run_json_path):
     with open(run_json_path) as f:
         run_dict = json.load(f)
-    return run_dict['result']['labels']
+    label_array = run_dict['result']['labels']
+    isolation_indicator = run_dict['result']['isolation_indicator']
+    for i, val in enumerate(isolation_indicator):
+        if val == 1:
+            label_array.insert(i, "-")
+    return label_array
 
 
 @compare_masks_clusters.automain
@@ -91,7 +96,10 @@ def run_experiment(weights_path, mask_path, run_json_path):
     neuron_stats = get_unmasked_neurons(mask_array)
 
     label_array = get_labels_from_run_json(run_json_path)
-    labels = list(set(label_array))  # I'm iterating thru too many times...
+    label_set = set(label_array)
+    label_set.discard("-")
+    labels = list(label_set)
+    # I'm iterating thru labels too many times...
     ious_iomins = [
         get_iou_iomin(neuron_stats, label_array, lab) for lab in labels
     ]
