@@ -13,8 +13,6 @@ compare_masks_clusters.observers.append(
 
 # NB: so far, this code only works for MLPs
 # TODO: make docstrings nicer
-# TODO: deal with complication that isolated CCs are deleted
-# (in process of dumping labels?)
 
 
 @compare_masks_clusters.config
@@ -54,7 +52,7 @@ def get_unmasked_neurons(mask_layer_array):
     return big_array
 
 
-def get_iou_iomin(neuron_indicator, label_array, cluster):
+def get_intersection_props(neuron_indicator, label_array, cluster):
     error_string = ("Label_array has length " + str(len(label_array)) +
                     ", neuron_indicator has length " +
                     str(len(neuron_indicator)))
@@ -71,10 +69,10 @@ def get_iou_iomin(neuron_indicator, label_array, cluster):
         sum_array.append(max(1, mask_status + cluster_status))
     intersection = sum(product_array)
     union = sum(sum_array)
-    minimum = min(num_in_cluster, num_unmasked_neurons)
     iou = intersection / union
-    iomin = intersection / minimum
-    return iou, iomin
+    iomask = intersection / num_unmasked_neurons
+    ioclust = intersection / num_in_cluster
+    return iou, iomask, ioclust
 
 
 def get_labels_from_run_json(run_json_path):
@@ -100,7 +98,8 @@ def run_experiment(weights_path, mask_path, run_json_path):
     label_set.discard("-")
     labels = list(label_set)
     # I'm iterating thru labels too many times...
-    ious_iomins = [
-        get_iou_iomin(neuron_stats, label_array, lab) for lab in labels
+    ious_iomasks_ioclusts = [
+        get_intersection_props(neuron_stats, label_array, lab)
+        for lab in labels
     ]
-    return ious_iomins
+    return ious_iomasks_ioclusts
