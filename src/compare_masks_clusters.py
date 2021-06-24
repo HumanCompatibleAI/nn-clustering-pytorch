@@ -66,7 +66,7 @@ def get_intersection_props(neuron_indicator, label_array, cluster):
         mask_status = neuron_indicator[i]
         cluster_status = cluster_indicator[i]
         product_array.append(mask_status * cluster_status)
-        sum_array.append(max(1, mask_status + cluster_status))
+        sum_array.append(min(1, mask_status + cluster_status))
     intersection = sum(product_array)
     union = sum(sum_array)
     iou = intersection / union
