@@ -22,6 +22,9 @@ def basic_config():
         "/model.pth")
     mask_path = ("./csordas_weights/export/addmul_feedforward_big/b4t2f6os" +
                  "/mask_add.pth")
+    other_mask_paths = [
+        "./csordas_weights/export/addmul_feedforward_big/b4t2f6os/mask_mul.pth"
+    ]
     run_json_path = "./shuffle_clust_runs/109/run.json"
     _ = locals()
     del _
@@ -50,6 +53,27 @@ def get_unmasked_neurons(mask_layer_array):
             neurons[i] = 1 if connected else 0
         big_array += neurons
     return big_array
+
+
+def get_unique_unmasked_neurons(mask_array, background_arrays):
+    if background_arrays == []:
+        return mask_array
+    else:
+        mask_indicator = get_unmasked_neurons(mask_array)
+        background_indicators = [
+            get_unmasked_neurons(background_array)
+            for background_array in background_arrays
+        ]
+        merged_array = []
+        for i in range(len(background_indicators[0])):
+            is_in_background = any([
+                background_indicators[j][i] == 1
+                for j in range(len(background_indicators))
+            ])
+            is_unique = mask_indicator[i] == 1 and not is_in_background
+            indicator = 1 if is_unique else 0
+            merged_array.append(indicator)
+        return merged_array
 
 
 def get_intersection_props(neuron_indicator, label_array, cluster):
@@ -87,11 +111,15 @@ def get_labels_from_run_json(run_json_path):
 
 
 @compare_masks_clusters.automain
-def run_experiment(weights_path, mask_path, run_json_path):
+def run_experiment(weights_path, mask_path, other_mask_paths, run_json_path):
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     mask_array = load_model_weights_pytorch(mask_path, device)
-    neuron_stats = get_unmasked_neurons(mask_array)
+    other_mask_arrays = [
+        load_model_weights_pytorch(other_path, device)
+        for other_path in other_mask_paths
+    ]
+    neuron_stats = get_unique_unmasked_neurons(mask_array, other_mask_arrays)
 
     label_array = get_labels_from_run_json(run_json_path)
     label_set = set(label_array)
