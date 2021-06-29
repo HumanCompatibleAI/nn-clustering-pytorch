@@ -30,6 +30,36 @@ def basic_config():
     del _
 
 
+def get_weights_in_clusters(label_array, weights_layer_array, labels):
+    weights = [my_dict['fc_weights'] for my_dict in weights_layer_array]
+    layer_widths = weights_to_layer_widths(weights)
+    # take in a fattened-out label array
+    # split it up using layer_widths
+    # use it to identify masks for each label other than "-"
+    layer_labels = []
+    prev_width = 0
+    for width in layer_widths:
+        layer_labels.append(label_array[prev_width:prev_width + width])
+        prev_width += width
+    clust_masks = []
+    for lab in labels:
+        clust_masks.append(get_weights_in_cluster(layer_labels, weights, lab))
+    return clust_masks
+
+
+def get_weights_in_cluster(layer_labels, weights, lab):
+    assert len(layer_labels) == len(weights) + 1
+    assert any([lab in label_list for label_list in layer_labels])
+    clust_mask = []
+    for i, weight_mat in enumerate(weights):
+        bool_mat = np.zeros_like(weight_mat, bool)
+        in_labels = np.array(layer_labels[i])
+        out_labels = np.array(layer_labels[i + 1])
+        bool_mat[np.ix_(out_labels == lab, in_labels == lab)] = True
+        clust_mask.append(bool_mat)
+    return clust_mask
+
+
 def get_unmasked_neurons(mask_layer_array):
     """
     Take a mask of a neural network. Return a list with length num neurons,
@@ -76,7 +106,7 @@ def get_unique_unmasked_neurons(mask_array, background_arrays):
         return merged_array
 
 
-def get_intersection_props(neuron_indicator, label_array, cluster):
+def get_intersection_props_neurons(neuron_indicator, label_array, cluster):
     error_string = ("Label_array has length " + str(len(label_array)) +
                     ", neuron_indicator has length " +
                     str(len(neuron_indicator)))
@@ -99,6 +129,27 @@ def get_intersection_props(neuron_indicator, label_array, cluster):
     return iou, iomask, ioclust
 
 
+def get_intersection_props_masks(cluster_mask_array, mask_array):
+    assert len(cluster_mask_array) == len(mask_array)
+    num_in_mask = 0
+    num_in_clust = 0
+    intersection = 0
+    union = 0
+    for i in range(len(cluster_mask_array)):
+        cluster_mask = cluster_mask_array[i]
+        other_mask = mask_array[i]['fc_weights']
+        num_in_mask += len(other_mask[other_mask])
+        num_in_clust += len(cluster_mask[cluster_mask])
+        intersection_mask = np.logical_and(cluster_mask, other_mask)
+        intersection += len(intersection_mask[intersection_mask])
+        union_mask = np.logical_or(cluster_mask, other_mask)
+        union += len(union_mask[union_mask])
+    iou = intersection / union
+    iomask = intersection / num_in_mask
+    ioclust = intersection / num_in_clust
+    return iou, iomask, ioclust
+
+
 def get_labels_from_run_json(run_json_path):
     with open(run_json_path) as f:
         run_dict = json.load(f)
@@ -106,7 +157,7 @@ def get_labels_from_run_json(run_json_path):
     isolation_indicator = run_dict['result']['isolation_indicator']
     for i, val in enumerate(isolation_indicator):
         if val == 1:
-            label_array.insert(i, "-")
+            label_array.insert(i, -1)
     return label_array
 
 
@@ -123,11 +174,19 @@ def run_experiment(weights_path, mask_path, other_mask_paths, run_json_path):
 
     label_array = get_labels_from_run_json(run_json_path)
     label_set = set(label_array)
-    label_set.discard("-")
+    label_set.discard(-1)
     labels = list(label_set)
     # I'm iterating thru labels too many times...
-    ious_iomasks_ioclusts = [
-        get_intersection_props(neuron_stats, label_array, lab)
+    neuron_ious_iomasks_ioclusts = [
+        get_intersection_props_neurons(neuron_stats, label_array, lab)
         for lab in labels
     ]
-    return ious_iomasks_ioclusts
+
+    weights_layer_array = load_model_weights_pytorch(weights_path, device)
+    clust_masks = get_weights_in_clusters(label_array, weights_layer_array,
+                                          labels)
+    weight_ious_iomasks_ioclusts = [
+        get_intersection_props_masks(clust_mask, mask_array)
+        for clust_mask in clust_masks
+    ]
+    return neuron_ious_iomasks_ioclusts, weight_ious_iomasks_ioclusts
