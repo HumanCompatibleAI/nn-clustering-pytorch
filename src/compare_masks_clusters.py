@@ -20,17 +20,21 @@ def basic_config():
     weights_path = (
         "./csordas_weights/export/addmul_feedforward_big/b4t2f6os" +
         "/model.pth")
+    all_mask_path = (
+        "./csordas_weights/export/addmul_feedforward_big/b4t2f6os" +
+        "/mask_all.pth")
     mask_path = ("./csordas_weights/export/addmul_feedforward_big/b4t2f6os" +
                  "/mask_add.pth")
     other_mask_paths = [
         "./csordas_weights/export/addmul_feedforward_big/b4t2f6os/mask_mul.pth"
     ]
-    run_json_path = "./shuffle_clust_runs/109/run.json"
+    run_json_path = "./shuffle_clust_runs/18/run.json"
     _ = locals()
     del _
 
 
-def get_weights_in_clusters(label_array, weights_layer_array, labels):
+def get_weights_in_clusters(label_array, weights_layer_array, labels,
+                            all_mask_array):
     weights = [my_dict['fc_weights'] for my_dict in weights_layer_array]
     layer_widths = weights_to_layer_widths(weights)
     # take in a fattened-out label array
@@ -43,12 +47,14 @@ def get_weights_in_clusters(label_array, weights_layer_array, labels):
         prev_width += width
     clust_masks = []
     for lab in labels:
-        clust_masks.append(get_weights_in_cluster(layer_labels, weights, lab))
+        clust_masks.append(
+            get_weights_in_cluster(layer_labels, weights, lab, all_mask_array))
     return clust_masks
 
 
-def get_weights_in_cluster(layer_labels, weights, lab):
+def get_weights_in_cluster(layer_labels, weights, lab, all_mask_array):
     assert len(layer_labels) == len(weights) + 1
+    assert len(weights) == len(all_mask_array)
     assert any([lab in label_list for label_list in layer_labels])
     clust_mask = []
     for i, weight_mat in enumerate(weights):
@@ -56,6 +62,7 @@ def get_weights_in_cluster(layer_labels, weights, lab):
         in_labels = np.array(layer_labels[i])
         out_labels = np.array(layer_labels[i + 1])
         bool_mat[np.ix_(out_labels == lab, in_labels == lab)] = True
+        bool_mat = np.logical_and(bool_mat, all_mask_array[i]['fc_weights'])
         clust_mask.append(bool_mat)
     return clust_mask
 
@@ -162,7 +169,8 @@ def get_labels_from_run_json(run_json_path):
 
 
 @compare_masks_clusters.automain
-def run_experiment(weights_path, mask_path, other_mask_paths, run_json_path):
+def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
+                   run_json_path):
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
     mask_array = load_model_weights_pytorch(mask_path, device)
@@ -170,6 +178,7 @@ def run_experiment(weights_path, mask_path, other_mask_paths, run_json_path):
         load_model_weights_pytorch(other_path, device)
         for other_path in other_mask_paths
     ]
+    all_mask_array = load_model_weights_pytorch(all_mask_path, device)
     neuron_stats = get_unique_unmasked_neurons(mask_array, other_mask_arrays)
 
     label_array = get_labels_from_run_json(run_json_path)
@@ -184,9 +193,10 @@ def run_experiment(weights_path, mask_path, other_mask_paths, run_json_path):
 
     weights_layer_array = load_model_weights_pytorch(weights_path, device)
     clust_masks = get_weights_in_clusters(label_array, weights_layer_array,
-                                          labels)
+                                          labels, all_mask_array)
     weight_ious_iomasks_ioclusts = [
         get_intersection_props_masks(clust_mask, mask_array)
         for clust_mask in clust_masks
     ]
     return neuron_ious_iomasks_ioclusts, weight_ious_iomasks_ioclusts
+    # return weight_ious_iomasks_ioclusts
