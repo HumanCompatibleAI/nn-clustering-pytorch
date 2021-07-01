@@ -157,6 +157,19 @@ def get_intersection_props_masks(cluster_mask_array, mask_array):
     return iou, iomask, ioclust
 
 
+def get_mask_proportions(mask_array, all_mask_array):
+    assert len(mask_array) == len(all_mask_array)
+    num_in_task_and_all_mask = 0
+    num_in_all_mask = 0
+    for i in range(len(mask_array)):
+        task_mask = mask_array[i]['fc_weights']
+        all_mask = all_mask_array[i]['fc_weights']
+        task_in_all_mask = np.logical_and(task_mask, all_mask)
+        num_in_task_and_all_mask += len(task_in_all_mask[task_in_all_mask])
+        num_in_all_mask += len(all_mask[all_mask])
+    return num_in_task_and_all_mask / num_in_all_mask
+
+
 def get_labels_from_run_json(run_json_path):
     with open(run_json_path) as f:
         run_dict = json.load(f)
@@ -179,6 +192,7 @@ def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
         for other_path in other_mask_paths
     ]
     all_mask_array = load_model_weights_pytorch(all_mask_path, device)
+    print(get_mask_proportions(mask_array, all_mask_array))
     neuron_stats = get_unique_unmasked_neurons(mask_array, other_mask_arrays)
 
     label_array = get_labels_from_run_json(run_json_path)
