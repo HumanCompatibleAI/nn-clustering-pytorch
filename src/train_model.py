@@ -534,12 +534,14 @@ def train_and_save(network, optimizer, criterion, train_loader,
                     num_prunes_so_far += 1
                 train_step_counter += 1
 
+        test_results_dict = {}
         for test_set in test_loader_dict:
             test_loader = test_loader_dict[test_set]
             test_acc, test_loss = eval_net(network, test_set, test_loader,
                                            device, criterion, dataset, _run)
             print("Test accuracy on " + test_set + " is", test_acc)
             print("Test loss on " + test_set + " is", test_loss)
+            test_results_dict[test_set] = {'acc': test_acc, 'loss': test_loss}
         if is_pruning and epoch == start_pruning_epoch - 1:
             model_path = save_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
@@ -553,7 +555,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
     torch.save(network.state_dict(), save_path)
     train_exp.add_artifact(save_path)
     print("Network saved at " + save_path)
-    return test_acc, test_loss, loss_list
+    return test_results_dict, loss_list
 
 
 def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
@@ -618,12 +620,21 @@ def decay_learning_rate(optimizer, epoch, decay_lr_factor, decay_lr_epochs):
             param_group['lr'] *= decay_lr_factor
 
 
+def process_csordas_output(net_out):
+    """
+    Process the output of nets trained on Csordas datasets to have vectors for
+    each digit
+    """
+    return net_out.view(net_out.shape[0], -1, 10)
+
+
 def csordas_loss(net_out, data):
     """
     Loss function for the add_mul dataset, which has an unusual interface.
     Named as it is since that dataset is taken from Csordas et al 2021.
     """
-    return F.cross_entropy(net_out.flatten(end_dim=-2),
+    processed_out = process_csordas_output(net_out)
+    return F.cross_entropy(processed_out.flatten(end_dim=-2),
                            data["output"].long().flatten())
 
 
@@ -649,10 +660,10 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
     else:
         optimizer_ = optim.SGD
     optimizer = optimizer_(my_net.parameters(), **optim_kwargs)
-    train_loader, test_loader, classes = load_datasets()
+    train_loader, test_loader_dict, classes = load_datasets()
     test_acc, test_loss, loss_list = train_and_save(my_net, optimizer,
                                                     criterion, train_loader,
-                                                    test_loader, device)
+                                                    test_loader_dict, device)
     return {
         'test acc': test_acc,
         'test loss': test_loss,
