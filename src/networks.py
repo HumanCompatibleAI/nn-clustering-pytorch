@@ -50,6 +50,27 @@ class TinyMLP(nn.Module):
         return x
 
 
+class AddMulMLP(nn.Module):
+    """
+    An MLP used for the addition/multiplication task from Csordas (2021).
+    """
+    def __init__(self):
+        super(AddMulMLP, self).__init__()
+        self.layer1 = nn.ModuleDict({"fc": nn.Linear(42, 2000)})
+        self.layer2 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
+        self.layer3 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
+        self.layer4 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
+        self.layer5 = nn.ModuleDict({"fc": nn.Linear(2000, 20)})
+
+    def forward(self, x):
+        x = F.relu(self.layer1["fc"](x))
+        x = F.relu(self.layer2["fc"](x))
+        x = F.relu(self.layer3["fc"](x))
+        x = F.relu(self.layer4["fc"](x))
+        x = self.layer5["fc"](x)
+        return x
+
+
 class SmallCNN(nn.Module):
     """
     A simple CNN, taken from the KMNIST benchmark:
@@ -324,7 +345,7 @@ def cifar10_vgg19_bn():
     return CIFAR10_VGG(make_layers(cfg['E'], batch_norm=True))
 
 
-mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP}
+mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP, 'add_mul': AddMulMLP}
 
 cnn_dict = {
     'cifar10_6_bn': CIFAR10_BN_CNN_6,

@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 import torch.optim as optim
 import torchvision
@@ -11,6 +12,7 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
+from add_mul import AddMul
 from clusterability_gradient import LaplacianEigenvalues
 from networks import cnn_dict, mlp_dict
 from tiny_dataset import TinyDataset
@@ -88,7 +90,7 @@ def load_datasets(dataset, batch_size):
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
-    assert dataset in ['mnist', 'kmnist', 'cifar10', 'tiny_dataset']
+    assert dataset in ['mnist', 'kmnist', 'cifar10', 'tiny_dataset', 'add_mul']
     if dataset == 'mnist':
         return load_mnist(batch_size)
     elif dataset == 'kmnist':
@@ -97,6 +99,8 @@ def load_datasets(dataset, batch_size):
         return load_cifar10(batch_size)
     elif dataset == 'tiny_dataset':
         return load_tiny_dataset(batch_size)
+    elif dataset == 'add_mul':
+        return load_add_mul(batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
 
@@ -143,7 +147,7 @@ def load_kmnist(batch_size):
                                               batch_size=batch_size,
                                               shuffle=True)
     classes = ("o", "ki", "su", "tsu", "na", "ha", "ma", "ya", "re", "wo")
-    return (train_loader, test_loader, classes)
+    return (train_loader, {'all': test_loader}, classes)
 
 
 def load_cifar10(batch_size):
@@ -171,7 +175,7 @@ def load_cifar10(batch_size):
                                               shuffle=True)
     classes = ("plane", "car", "bird", "cat", "deer", "dog", "frog", "horse",
                "ship", "truck")
-    return train_loader, test_loader, classes
+    return train_loader, {'all': test_loader}, classes
 
 
 def load_tiny_dataset(batch_size):
@@ -184,7 +188,40 @@ def load_tiny_dataset(batch_size):
                                               batch_size=batch_size,
                                               shuffle=False)
     classes = ("0", "1")
-    return train_loader, test_loader, classes
+    return train_loader, {'all': test_loader}, classes
+
+
+def load_add_mul(batch_size):
+    train_set = AddMul("train", 1_000_000, 2)
+    train_loader = torch.utils.data.DataLoader(train_set,
+                                               batch_size=batch_size,
+                                               shuffle=True)
+    valid_set_iid = AddMul("valid", 10_000, 2)
+    iid_loader = torch.utils.data.DataLoader(valid_set_iid,
+                                             batch_size=batch_size,
+                                             shuffle=True)
+    valid_set_add = AddMul("valid", 10_000, 2, restrict=["add"])
+    add_loader = torch.utils.data.DataLoader(valid_set_add,
+                                             batch_size=batch_size,
+                                             shuffle=True)
+    valid_set_mul = AddMul("valid", 10_000, 2, restrict=["mul"])
+    mul_loader = torch.utils.data.DataLoader(valid_set_mul,
+                                             batch_size=batch_size,
+                                             shuffle=True)
+    my_dict = {"all": iid_loader, "add": add_loader, "mul": mul_loader}
+    return train_loader, my_dict, ()
+
+
+def csordas_get_input(data):
+    """
+    Converting data taken from the add_mul dataset to neural network inputs.
+    Named as it is since that dataset is taken from Csordas et al 2021.
+    data: a dictionary that maps strings to pytorch tensors.
+    """
+    onehot_inputs = F.one_hot(data["input"].long(), 10)
+    onehot_op = F.one_hot(data["op"].long(), 2)
+    return torch.cat([onehot_inputs.flatten(1),
+                      onehot_op.flatten(1)], -1).float()
 
 
 def module_array_to_clust_grad_input(weight_modules, net_type):
@@ -370,11 +407,33 @@ def get_prunable_modules(network):
     return prunable_modules
 
 
+def get_loss(network, data, criterion, dataset, device):
+    """
+    Get the loss of a network on some data. This is its own function because
+    the Csordas datasets work differently for this.
+    network: nn.Module that's a neural network.
+    data: Something you got from a dataset loader.
+    criterion: a loss function.
+    dataset: a string telling you what dataset you're in.
+    device: pytorch device
+    Returns: pytorch tensor containing a scalar.
+    """
+    if dataset != 'add_mul':
+        inputs, labels = data[0].to(device), data[1].to(device)
+        outputs = network(inputs)
+        loss = criterion(outputs, labels)
+    else:
+        net_in = csordas_get_input(data)
+        net_out = network(net_in)
+        loss = criterion(net_out, data)
+    return loss
+
+
 @train_exp.capture
-def train_and_save(network, optimizer, criterion, train_loader, test_loader,
-                   device, num_epochs, net_type, pruning_config,
-                   cluster_gradient, cluster_gradient_config, decay_lr,
-                   log_interval, save_path_prefix, _run):
+def train_and_save(network, optimizer, criterion, train_loader,
+                   test_loader_dict, device, num_epochs, net_type,
+                   pruning_config, cluster_gradient, cluster_gradient_config,
+                   decay_lr, log_interval, save_path_prefix, dataset, _run):
     """
     Train a neural network, printing out log information, and saving along the
     way.
@@ -382,7 +441,9 @@ def train_and_save(network, optimizer, criterion, train_loader, test_loader,
     optimizer: pytorch optimizer. Might be SGD or Adam.
     criterion: loss function.
     train_loader: pytorch loader for the training dataset
-    test_loader: pytorch loader for the testing dataset
+    test_loader_dict: dict of pytorch loaders for the testing dataset.
+                      different entries will be for different subsets of the
+                      test set.
     device: pytorch device - do things go on CPU or GPU?
     num_epochs: int for the total number of epochs to train for (including any
                 pruning)
@@ -409,6 +470,7 @@ def train_and_save(network, optimizer, criterion, train_loader, test_loader,
     log_interval: int. how many training steps between logging infodumps.
     save_path_prefix: string containing the relative path to save the model.
                       should not include final '.pth' suffix.
+    dataset: string indicating the dataset
     returns: tuple of test acc, test loss, and list of tuples of
              (epoch number, iteration number, train loss)
     """
@@ -439,10 +501,8 @@ def train_and_save(network, optimizer, criterion, train_loader, test_loader,
         running_loss = 0.0
 
         for i, data in enumerate(train_loader):
-            inputs, labels = data[0].to(device), data[1].to(device)
             optimizer.zero_grad()
-            outputs = network(inputs)
-            loss = criterion(outputs, labels)
+            loss = get_loss(network, data, criterion, dataset, device)
             if (cluster_gradient
                     and i % cluster_gradient_config['frequency'] == 0):
                 if cluster_gradient_config['normalize']:
@@ -474,10 +534,12 @@ def train_and_save(network, optimizer, criterion, train_loader, test_loader,
                     num_prunes_so_far += 1
                 train_step_counter += 1
 
-        test_acc, test_loss = eval_net(network, test_loader, device, criterion,
-                                       _run)
-        print("Test accuracy is", test_acc)
-        print("Test loss is", test_loss)
+        for test_set in test_loader_dict:
+            test_loader = test_loader_dict[test_set]
+            test_acc, test_loss = eval_net(network, test_set, test_loader,
+                                           device, criterion, dataset, _run)
+            print("Test accuracy on " + test_set + " is", test_acc)
+            print("Test loss on " + test_set + " is", test_loss)
         if is_pruning and epoch == start_pruning_epoch - 1:
             model_path = save_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
@@ -494,15 +556,18 @@ def train_and_save(network, optimizer, criterion, train_loader, test_loader,
     return test_acc, test_loss, loss_list
 
 
-def eval_net(network, test_loader, device, criterion, _run):
+def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
     """
     gets test loss and accuracy
     network: network to get loss of
+    test_set: string, name of this test set
     test_loader: pytorch loader of test set
     device: device to put data on
     criterion: loss function
+    dataset: string
     returns: tuple of floats. first is test accuracy, second is test loss.
     """
+
     correct = 0.0
     total = 0
     loss_sum = 0.0
@@ -511,19 +576,30 @@ def eval_net(network, test_loader, device, criterion, _run):
     network.eval()
     with torch.no_grad():
         for data in test_loader:
-            inputs, labels = data[0].to(device), data[1].to(device)
-            outputs = network(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-            loss = criterion(outputs, labels)
-            loss_sum += loss.item()
-            num_batches += 1
+            if dataset != 'add_mul':
+                inputs, labels = data[0].to(device), data[1].to(device)
+                outputs = network(inputs)
+                _, predicted = torch.max(outputs.data, 1)
+                loss = criterion(outputs, labels)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+                loss_sum += loss.item()
+                num_batches += 1
+            else:
+                inputs = csordas_get_input(data)
+                outputs = network(inputs)
+                loss = criterion(outputs, data)
+                predicted = outputs.argmax(-1)
+                total += outputs.shape[0]
+                correct += (
+                    data["output"] == predicted).all(-1).long().sum().item()
+                loss_sum += loss.item()
+                num_batches += 1
 
     test_accuracy = correct / total
     test_avg_loss = loss_sum / num_batches
-    _run.log_scalar("test.accuracy", test_accuracy)
-    _run.log_scalar("test.loss", test_avg_loss)
+    _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
+    _run.log_scalar("test." + test_set + ".loss", test_avg_loss)
     return test_accuracy, test_avg_loss
 
 
@@ -542,6 +618,15 @@ def decay_learning_rate(optimizer, epoch, decay_lr_factor, decay_lr_epochs):
             param_group['lr'] *= decay_lr_factor
 
 
+def csordas_loss(net_out, data):
+    """
+    Loss function for the add_mul dataset, which has an unusual interface.
+    Named as it is since that dataset is taken from Csordas et al 2021.
+    """
+    return F.cross_entropy(net_out.flatten(end_dim=-2),
+                           data["output"].long().flatten())
+
+
 @train_exp.automain
 def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
     """
@@ -554,7 +639,7 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss() if dataset != 'add_mul' else csordas_loss
     my_net = (mlp_dict[net_choice]()
               if net_type == 'mlp' else cnn_dict[net_choice]())
     if optim_func == 'adam':
