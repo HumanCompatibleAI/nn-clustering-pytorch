@@ -192,7 +192,7 @@ def load_tiny_dataset(batch_size):
 
 
 def load_add_mul(batch_size):
-    train_set = AddMul("train", 1_000_000, 2)
+    train_set = AddMul("train", 100_000, 2)
     train_loader = torch.utils.data.DataLoader(train_set,
                                                batch_size=batch_size,
                                                shuffle=True)
@@ -591,7 +591,8 @@ def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
                 inputs = csordas_get_input(data)
                 outputs = network(inputs)
                 loss = criterion(outputs, data)
-                predicted = outputs.argmax(-1)
+                processed_outputs = process_csordas_output(outputs)
+                predicted = processed_outputs.argmax(-1)
                 total += outputs.shape[0]
                 correct += (
                     data["output"] == predicted).all(-1).long().sum().item()
@@ -661,11 +662,10 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
         optimizer_ = optim.SGD
     optimizer = optimizer_(my_net.parameters(), **optim_kwargs)
     train_loader, test_loader_dict, classes = load_datasets()
-    test_acc, test_loss, loss_list = train_and_save(my_net, optimizer,
-                                                    criterion, train_loader,
-                                                    test_loader_dict, device)
+    test_results_dict, loss_list = train_and_save(my_net, optimizer, criterion,
+                                                  train_loader,
+                                                  test_loader_dict, device)
     return {
-        'test acc': test_acc,
-        'test loss': test_loss,
+        'test results dict': test_results_dict,
         'train loss list': loss_list
     }
