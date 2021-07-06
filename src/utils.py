@@ -249,3 +249,24 @@ def print_network_weights(net):
     """
     for param_tensor in net.state_dict():
         print(param_tensor, "\t", net.state_dict()[param_tensor])
+
+
+def split_digits(n_digits, nums):
+    """
+    Split each integer in a numpy array of integers into an array containing
+    each digit of the original integer in a separate entry, in reverse order.
+    So, for example, [10, 21, 3] -> [[0,1], [1,2], [3,0]].
+    Stolen from Robert Csordas' code:
+    https://github.com/RobertCsordas/modules/blob/
+    3c9422bfd841a1a6aa3dd5e538f5a966b820df4f/dataset/helpers/split_digits.py
+
+    n_digits: int, number of digits of the largest integer
+    nums: np.ndarray, array of integers to split
+    returns: np.ndarray containing 8-bit integers
+    """
+    digits = []
+    for d in range(n_digits):
+        digits.append(nums % 10)
+        nums = nums // 10
+
+    return np.stack(digits, -1).astype(np.uint8)
