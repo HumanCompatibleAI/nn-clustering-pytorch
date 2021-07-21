@@ -39,7 +39,7 @@ def get_weights_in_clusters(label_array, weights_layer_array, labels,
     layer_widths = weights_to_layer_widths(weights)
     # take in a fattened-out label array
     # split it up using layer_widths
-    # use it to identify masks for each label other than "-"
+    # use it to identify masks for each label other than "-1"
     layer_labels = []
     prev_width = 0
     for width in layer_widths:
@@ -94,7 +94,7 @@ def get_unmasked_neurons(mask_layer_array):
 
 def get_unique_unmasked_neurons(mask_array, background_arrays):
     if background_arrays == []:
-        return mask_array
+        return get_unmasked_neurons(mask_array)
     else:
         mask_indicator = get_unmasked_neurons(mask_array)
         background_indicators = [
@@ -153,7 +153,7 @@ def get_intersection_props_masks(cluster_mask_array, mask_array):
         union += len(union_mask[union_mask])
     iou = intersection / union
     iomask = intersection / num_in_mask
-    ioclust = intersection / num_in_clust
+    ioclust = 0 if num_in_clust == 0 else intersection / num_in_clust
     return iou, iomask, ioclust
 
 
