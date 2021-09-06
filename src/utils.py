@@ -160,6 +160,36 @@ def load_masked_weights_pytorch(model_path, mask_path, pytorch_device):
     return new_layer_array
 
 
+def load_masked_out_weights_pytorch(model_path, mask_path, pytorch_device):
+    """
+    Load model weights as well as masks for tensors in your model, and return
+    numpy ndarrays containing weights that would be hidden by the mask.
+    model_path: string
+    mask_path: string to state_dict of Nones and boolean tensors.
+    pytorch_device: pytorch device
+    returns: an array of dicts containing layer names and various numpy
+             tensors
+    """
+    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device)
+    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device)
+    assert len(model_layer_array) == len(mask_layer_array)
+    new_layer_array = []
+    for i in range(len(model_layer_array)):
+        model_dict = model_layer_array[i]
+        layer_name = model_dict['layer']
+        mask_dict = mask_layer_array[i]
+        new_dict = {'layer': layer_name}
+        for key in model_dict:
+            my_tens = model_dict[key]
+            corresp_mask = mask_dict[key]
+            if corresp_mask is not None and key != 'layer':
+                np.place(my_tens, corresp_mask, [0])
+            if key != 'layer':
+                new_dict[key] = my_tens
+        new_layer_array.append(new_dict)
+    return new_layer_array
+
+
 def weights_to_layer_widths(weights_array):
     """
     take in an array of weight matrices, and return how wide each layer of the
