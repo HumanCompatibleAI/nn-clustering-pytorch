@@ -64,7 +64,7 @@ def get_weights_in_cluster(layer_labels, weights, lab, all_mask_array):
         bool_mat[np.ix_(out_labels == lab, in_labels == lab)] = True
         bool_mat = np.logical_and(bool_mat, all_mask_array[i]['fc_weights'])
         clust_mask.append(bool_mat)
-    return clust_mask
+    return lab, clust_mask
 
 
 def get_unmasked_neurons(mask_layer_array):
@@ -133,10 +133,11 @@ def get_intersection_props_neurons(neuron_indicator, label_array, cluster):
     iou = intersection / union
     iomask = intersection / num_unmasked_neurons
     ioclust = intersection / num_in_cluster
-    return iou, iomask, ioclust
+    return cluster, num_in_cluster, iou, iomask, ioclust
 
 
-def get_intersection_props_masks(cluster_mask_array, mask_array):
+def get_intersection_props_masks(cluster_mask_tup, mask_array):
+    cluster_id, cluster_mask_array = cluster_mask_tup
     assert len(cluster_mask_array) == len(mask_array)
     num_in_mask = 0
     num_in_clust = 0
@@ -154,7 +155,13 @@ def get_intersection_props_masks(cluster_mask_array, mask_array):
     iou = intersection / union
     iomask = intersection / num_in_mask
     ioclust = 0 if num_in_clust == 0 else intersection / num_in_clust
-    return iou, iomask, ioclust
+    if iou == 0 and ioclust != 0:
+        print("iou:", iou)
+        print("ioclust:", ioclust)
+        print("intersection:", intersection)
+        print("union:", union)
+        ValueError("This makes no sense")
+    return cluster_id, num_in_clust, iou, iomask, ioclust
 
 
 def get_mask_proportions(mask_array, all_mask_array):
