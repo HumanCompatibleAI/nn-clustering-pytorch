@@ -71,6 +71,35 @@ class AddMulMLP(nn.Module):
         return x
 
 
+class SimpleMLP(nn.Module):
+    def __init__(self, out=2, input_type="single", hidden=512):
+        super(SimpleMLP, self).__init__()
+        self.input_type = input_type
+        if input_type == "single":
+            inp = 1
+        elif input_type == "multi":
+            inp = out
+        self.hidden1 = hidden
+        self.hidden2 = hidden
+        self.hidden3 = hidden
+        self.layer1 = nn.ModuleDict({"fc": nn.Linear(inp, self.hidden1)})
+        self.layer2 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden1, self.hidden2)})
+        self.layer3 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden2, self.hidden3)})
+        self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, out)})
+
+    def forward(self, x):
+        if len(x.shape) == 1:
+            x = x[:, None]
+        act = F.relu
+        x = act(self.layer1["fc"](x))
+        x = act(self.layer2["fc"](x))
+        x = act(self.layer3["fc"](x))
+        x = self.layer4["fc"](x)
+        return x
+
+
 class SmallCNN(nn.Module):
     """
     A simple CNN, taken from the KMNIST benchmark:
@@ -345,7 +374,12 @@ def cifar10_vgg19_bn():
     return CIFAR10_VGG(make_layers(cfg['E'], batch_norm=True))
 
 
-mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP, 'add_mul': AddMulMLP}
+mlp_dict = {
+    'small': SmallMLP,
+    'tiny': TinyMLP,
+    'add_mul': AddMulMLP,
+    "simple": SimpleMLP
+}
 
 cnn_dict = {
     'cifar10_6_bn': CIFAR10_BN_CNN_6,

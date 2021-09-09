@@ -17,6 +17,7 @@ requests = "*"
 urllib3 = ">=1.26.5"
 seaborn = "*"
 pandas = "*"
+jupyter = "*"
 
 [dev-packages]
 pre-commit = "*"
