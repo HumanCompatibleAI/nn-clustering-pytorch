@@ -63,7 +63,7 @@ def get_weight_modules_from_live_net(network):
     return layer_array
 
 
-def get_weight_tensors_from_state_dict(state_dict):
+def get_weight_tensors_from_state_dict(state_dict, include_biases=False):
     """
     Takes a pytorch state dict, and returns an array of the weight tensors that
     constitute the graph we're working with.
@@ -73,6 +73,8 @@ def get_weight_tensors_from_state_dict(state_dict):
         README for details
     NB: also relies on MLPs not using batch norm
     state_dict: a pytorch state dict
+    include_biases: bool indicating whether we should include bias tensors.
+                    should only be True for debugging.
     returns: an array of dicts containing layer names and various pytorch
              tensors
     """
@@ -90,10 +92,40 @@ def get_weight_tensors_from_state_dict(state_dict):
             module_name = module_name_parts[-1]
         old_layer = (bool(layer_array)
                      and layer_array[-1]['layer'] == new_layer_name)
-        if module_name == "fc" and attr_name == "weight" and not old_layer:
-            layer_array.append({'layer': new_layer_name, 'fc_weights': tens})
-        if (module_name == "conv" and attr_name == "weight" and not old_layer):
-            layer_array.append({'layer': new_layer_name, 'conv_weights': tens})
+        if module_name == "fc" and attr_name == "weight":
+            if not old_layer:
+                layer_array.append({
+                    'layer': new_layer_name,
+                    'fc_weights': tens
+                })
+            if old_layer and layer_array[-1].keys() == {'layer', 'fc_biases'}:
+                layer_array[-1]['fc_weights'] = tens
+        if module_name == "fc" and attr_name == "bias" and include_biases:
+            if old_layer:
+                layer_array[-1]['fc_biases'] = tens
+            else:
+                layer_array.append({
+                    'layer': new_layer_name,
+                    'fc_biases': tens
+                })
+        if module_name == "conv" and attr_name == "weight":
+            if not old_layer:
+                layer_array.append({
+                    'layer': new_layer_name,
+                    'conv_weights': tens
+                })
+            if old_layer and layer_array[-1].keys() == {
+                    'layer', 'conv_biases'
+            }:
+                layer_array[-1]['conv_weights'] = tens
+        if module_name == "conv" and attr_name == "bias" and include_biases:
+            if old_layer:
+                layer_array[-1]['conv_biases'] = tens
+            else:
+                layer_array.append({
+                    'layer': new_layer_name,
+                    'conv_biases': tens
+                })
         if module_name == "bn" and old_layer:
             if attr_name == "weight":
                 layer_array[-1]['bn_weights'] = tens
@@ -111,18 +143,23 @@ def check_layer_names(layer_array):
             assert layer_names[i] != layer_names[j], layer_name_problem
 
 
-def load_model_weights_pytorch(model_path, pytorch_device):
+def load_model_weights_pytorch(model_path,
+                               pytorch_device,
+                               include_biases=False):
     """
     Take a pytorch saved model state dict, and return an array of the weight
     tensors as numpy arrays
     NB: this relies on the dict being ordered in the right order.
     model_path: a string, pointing to a pytorch saved state_dict
     pytorch_device: pytorch device, which device to save the model to
+    include_biases: bool indicating whether to also load bias tensors. should
+                    only be True while debugging.
     returns: an array of dicts containing layer names and various numpy
              tensors
     """
     state_dict = torch.load(model_path, map_location=pytorch_device)
-    layer_array = get_weight_tensors_from_state_dict(state_dict)
+    layer_array = get_weight_tensors_from_state_dict(state_dict,
+                                                     include_biases)
     for layer_dict in layer_array:
         for key, val in layer_dict.items():
             if isinstance(val, torch.Tensor):
@@ -130,18 +167,25 @@ def load_model_weights_pytorch(model_path, pytorch_device):
     return layer_array
 
 
-def load_masked_weights_pytorch(model_path, mask_path, pytorch_device):
+def load_masked_weights_pytorch(model_path,
+                                mask_path,
+                                pytorch_device,
+                                include_biases=False):
     """
     Load model weights as well as masks for tensors in your model, and return
-    numpy ndarrays containing masked weights.
+    numpy ndarrays containing weights with masks applied.
     model_path: string
     mask_path: string to state_dict of Nones and boolean tensors.
     pytorch_device: pytorch device
+    include_biases: bool indicating whether to also load bias tensors. should
+                    only be True while debugging.
     returns: an array of dicts containing layer names and various numpy
              tensors
     """
-    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device)
-    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device)
+    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device,
+                                                   include_biases)
+    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device,
+                                                  include_biases)
     assert len(model_layer_array) == len(mask_layer_array)
     new_layer_array = []
     for i in range(len(model_layer_array)):
@@ -160,18 +204,25 @@ def load_masked_weights_pytorch(model_path, mask_path, pytorch_device):
     return new_layer_array
 
 
-def load_masked_out_weights_pytorch(model_path, mask_path, pytorch_device):
+def load_masked_out_weights_pytorch(model_path,
+                                    mask_path,
+                                    pytorch_device,
+                                    include_biases=False):
     """
     Load model weights as well as masks for tensors in your model, and return
     numpy ndarrays containing weights that would be hidden by the mask.
     model_path: string
     mask_path: string to state_dict of Nones and boolean tensors.
     pytorch_device: pytorch device
+    include_biases: bool indicating whether to also load bias tensors. should
+                    only be True while debugging.
     returns: an array of dicts containing layer names and various numpy
              tensors
     """
-    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device)
-    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device)
+    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device,
+                                                   include_biases)
+    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device,
+                                                  include_biases)
     assert len(model_layer_array) == len(mask_layer_array)
     new_layer_array = []
     for i in range(len(model_layer_array)):
