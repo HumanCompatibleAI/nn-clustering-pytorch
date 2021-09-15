@@ -87,6 +87,7 @@ def mlp_config():
     batch_size = 250
     num_batches_train = 300
     num_batches_test = 10
+    calc_simple_diags = True
     simple_net_kwargs = {
         "out": len(SIMPLE_FUNCTIONS[fns_name]),
         "input_type": input_type,
@@ -476,7 +477,8 @@ def get_loss(network, data, criterion, dataset, device):
 def train_and_save(network, optimizer, criterion, train_loader,
                    test_loader_dict, device, num_epochs, net_type,
                    pruning_config, cluster_gradient, cluster_gradient_config,
-                   decay_lr, log_interval, save_path_prefix, dataset, _run):
+                   decay_lr, calc_simple_diags, log_interval, save_path_prefix,
+                   dataset, _run):
     """
     Train a neural network, printing out log information, and saving along the
     way.
@@ -510,6 +512,8 @@ def train_and_save(network, optimizer, criterion, train_loader,
                              cluster_gradient is True.
     decay_lr: bool representing whether or not to decay the learning rate over
               training.
+    calc_simple_diags: bool representing whether to calculate the additional
+                       diags for the simple network
     log_interval: int. how many training steps between logging infodumps.
     save_path_prefix: string containing the relative path to save the model.
                       should not include final '.pth' suffix.
@@ -590,8 +594,28 @@ def train_and_save(network, optimizer, criterion, train_loader,
                     'loss': test_loss
                 }
             else:
+                # Simple dataset is a regression task, don't calculate accuracy
                 print("Test loss on " + test_set + " is", test_loss)
                 test_results_dict[test_set] = {'loss': test_loss}
+                if calc_simple_diags:
+                    if network.input_type == "multi":
+                        # For a streamed network, calculate argument dependence
+                        arg_deps = network.calc_arg_deps()
+                        print("Argument interdependence for each stream:"
+                              " {}".format(arg_deps))
+                        test_results_dict[test_set]["arg_deps"] = arg_deps
+                        for c, i in enumerate(arg_deps):
+                            _run.log_scalar(
+                                "test." + test_set + ".arg_deps"
+                                ".stream_{}".format(c), i)
+                    # For all simple networks, find sparsity of hidden layers
+                    sparsity = network.calc_sparsity(do_print=True)
+                    test_results_dict[test_set]["sparsity"] = sparsity
+                    for c, i in enumerate(sparsity):
+                        _run.log_scalar(
+                            "test." + test_set + ".sparsity"
+                            ".layer_{}".format(c + 1), i)
+
         if is_pruning and epoch == start_pruning_epoch - 1:
             model_path = save_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
@@ -716,10 +740,10 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
         criterion = nn.CrossEntropyLoss()
 
     if net_choice == "simple":
-        my_net = mlp_dict[net_choice](**simple_net_kwargs)
+        network = mlp_dict[net_choice](**simple_net_kwargs)
     else:
-        my_net = (mlp_dict[net_choice]()
-                  if net_type == 'mlp' else cnn_dict[net_choice]())
+        network = (mlp_dict[net_choice]()
+                   if net_type == 'mlp' else cnn_dict[net_choice]())
 
     if optim_func == 'adam':
         optimizer_ = optim.Adam
@@ -727,11 +751,11 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
         optimizer_ = optim.SGD
     else:
         optimizer_ = optim.SGD
-    optimizer = optimizer_(my_net.parameters(), **optim_kwargs)
+    optimizer = optimizer_(network.parameters(), **optim_kwargs)
 
     train_loader, test_loader_dict, classes = load_datasets()
-    test_results_dict, loss_list = train_and_save(my_net, optimizer, criterion,
-                                                  train_loader,
+    test_results_dict, loss_list = train_and_save(network, optimizer,
+                                                  criterion, train_loader,
                                                   test_loader_dict, device)
     return {
         'test results dict': test_results_dict,
