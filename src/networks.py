@@ -137,7 +137,7 @@ class SimpleMLP(nn.Module):
         output = []
         for i in range(1, 4):
             activated_neurons = (self.activation[i] != 0).sum(axis=0)
-            num_neurons = (activated_neurons > 0).sum().detach().numpy()
+            num_neurons = (activated_neurons > 0).sum().detach().cpu().numpy()
             total_neurons = len(activated_neurons)
             if do_print:
                 print("Layer {} has {} activated neurons out of {}".format(
