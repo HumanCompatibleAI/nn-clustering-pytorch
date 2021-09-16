@@ -600,7 +600,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
                 if calc_simple_diags:
                     if network.input_type == "multi":
                         # For a streamed network, calculate argument dependence
-                        arg_deps = network.calc_arg_deps()
+                        arg_deps = network.calc_arg_deps(device)
                         print("Argument interdependence for each stream:"
                               " {}".format(arg_deps))
                         test_results_dict[test_set]["arg_deps"] = arg_deps
@@ -609,7 +609,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
                                 "test." + test_set + ".arg_deps"
                                 ".stream_{}".format(c), i)
                     # For all simple networks, find sparsity of hidden layers
-                    sparsity = network.calc_sparsity(do_print=True)
+                    sparsity = network.calc_sparsity(device, do_print=True)
                     test_results_dict[test_set]["sparsity"] = sparsity
                     for c, i in enumerate(sparsity):
                         _run.log_scalar(

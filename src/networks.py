@@ -106,23 +106,23 @@ class SimpleMLP(nn.Module):
         x = self.layer4["fc"](x)
         return x
 
-    def cache_activations(net):
+    def cache_activations(self):
         """
         Creates forward hooks to cache the intermediate activations for each
         layer.
         """
-        net.activation = {}
+        self.activation = {}
 
         def hook(model, inpu, output, name):
-            net.activation[name] = F.relu(output.detach())
+            self.activation[name] = F.relu(output.detach())
 
-        net.layer1.fc.register_forward_hook(functools.partial(hook, name=1))
-        net.layer2.fc.register_forward_hook(functools.partial(hook, name=2))
-        net.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
-        net.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
-        return net.activation
+        self.layer1.fc.register_forward_hook(functools.partial(hook, name=1))
+        self.layer2.fc.register_forward_hook(functools.partial(hook, name=2))
+        self.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
+        self.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
+        return self.activation
 
-    def calc_sparsity(self, n=10000, lim=5, do_print=True):
+    def calc_sparsity(self, device, n=10000, lim=5, do_print=True):
         """
         Diagnostic function. Runs the network on n random data points, and
         returns the proportion of neurons in each layer that are never
@@ -132,6 +132,7 @@ class SimpleMLP(nn.Module):
             x = (torch.rand((n, self.out)) - 0.5) * 10
         else:
             x = (torch.rand((n, 1)) - 0.5) * 10
+        x = x.to(device)
         _ = self(x)
         output = []
         for i in range(1, 4):
@@ -144,7 +145,7 @@ class SimpleMLP(nn.Module):
             output.append(num_neurons / total_neurons)
         return output
 
-    def calc_arg_deps(self, n=100, show_plot=False, fns=None):
+    def calc_arg_deps(self, device, n=100, show_plot=False, fns=None):
         """
         Diagnostic function. For a streamed network, calculates the dependence
         of each stream on the inputs for other streams.
@@ -170,6 +171,7 @@ class SimpleMLP(nn.Module):
                     else:
                         x_list.append(torch.tensor([fix for i in range(n)]))
                 x_stack = torch.stack(x_list, axis=1)
+                x_stack = x_stack.to(device)
                 y = self(x_stack)[:, pos]
                 output = y.detach().numpy()
                 outputs.append(output)
