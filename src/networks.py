@@ -173,11 +173,11 @@ class SimpleMLP(nn.Module):
                 x_stack = torch.stack(x_list, axis=1)
                 x_stack = x_stack.to(device)
                 y = self(x_stack)[:, pos]
-                output = y.detach().numpy()
+                output = y.detach().cpu().numpy()
                 outputs.append(output)
                 if show_plot:
-                    label = fns[pos](x).detach().numpy()
-                    plt.plot(x.detach().numpy(),
+                    label = fns[pos](x).detach().cpu().numpy()
+                    plt.plot(x.detach().cpu().numpy(),
                              output - label,
                              label="network diff {}".format(fix))
             if show_plot:

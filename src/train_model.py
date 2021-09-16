@@ -84,7 +84,6 @@ def mlp_config():
     fns_name = "high_freq_waves"
     input_type = "single"
     lim = 5
-    batch_size = 250
     num_batches_train = 300
     num_batches_test = 10
     calc_simple_diags = True
