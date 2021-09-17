@@ -49,10 +49,10 @@ def mlp_config():
     batch_size = 128
     num_epochs = 20
     log_interval = 100
-    dataset = 'simple_dataset'
+    dataset = 'kmnist'
     model_dir = './models/'
     net_type = 'mlp'
-    net_choice = 'simple'
+    net_choice = 'mnist'
     # pruning will be as described in Zhu and Gupta 2017, arXiv:1710.01878
     pruning_config = {
         'exponent': 3,
@@ -80,24 +80,25 @@ def mlp_config():
     save_path_prefix = (model_dir + net_type + '_' + dataset +
                         cluster_gradient * '_clust-grad' + save_path_end)
 
-    # Simple Network config
-    fns_name = "high_freq_waves"
-    input_type = "single"
-    lim = 5
-    num_batches_train = 300
-    num_batches_test = 10
-    calc_simple_diags = True
-    simple_net_kwargs = {
-        "out": len(SIMPLE_FUNCTIONS[fns_name]),
-        "input_type": input_type,
-        "hidden": 512,
+    # Simple Network config - these variables are left blank, and filled in by
+    # using with simple_math_config.
+    fns_name = ""
+    input_type = ""
+    lim = None
+    num_batches_train = None
+    num_batches_test = None
+    calc_simple_diags = None
+    simple_math_net_kwargs = {
+        "out": None,
+        "input_type": "",
+        "hidden": None,
     }
 
     _ = locals()
     del _
 
 
-# Named config can be included by ptyhon __ with cnn_config - optional set!
+# Named config can be included by python __ with cnn_config - optional set!
 @train_exp.named_config
 def cnn_config():
     net_type = 'cnn'
@@ -105,14 +106,35 @@ def cnn_config():
     del _
 
 
+@train_exp.named_config
+def simple_math_config():
+    dataset = 'simple_dataset'
+    net_choice = 'simple'
+    fns_name = "high_freq_waves"
+    input_type = "single"
+    lim = 5
+    num_batches_train = 300
+    num_batches_test = 10
+    calc_simple_diags = True
+    simple_math_net_kwargs = {
+        "out": len(SIMPLE_FUNCTIONS[fns_name]),
+        "input_type": input_type,
+        "hidden": 512,
+    }
+    _ = locals()
+    del _
+
+
 # Capture means 'use sacred config to fill in variables for this function,
-# unless explicitly set when called
+# unless explicitly set when called'
 @train_exp.capture
 def load_datasets(dataset, batch_size, fns_name=""):
     """
     get loaders for training datasets, as well as a description of the classes.
     dataset: string representing the dataset.
     batch_size: int for how many things should be in a batch
+    fns_name: str, only used for simple_dataset. Gives the name of the math
+        functions being modeled
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
@@ -551,8 +573,8 @@ def train_and_save(network, optimizer, criterion, train_loader,
             loss = get_loss(network, data, criterion, dataset, device)
             if (cluster_gradient
                     and i % cluster_gradient_config['frequency'] == 0):
-                # if cluster_gradient_config['normalize']:
-                #     normalize_weights(network)
+                if cluster_gradient_config['normalize']:
+                    normalize_weights(network)
                 clust_reg_term = calculate_clust_reg(cluster_gradient_config,
                                                      net_type, network)
                 loss += (clust_reg_term * cluster_gradient_config['frequency'])
@@ -597,7 +619,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
                 print("Test loss on " + test_set + " is", test_loss)
                 test_results_dict[test_set] = {'loss': test_loss}
                 if calc_simple_diags:
-                    if network.input_type == "multi":
+                    if network.input_type == "streamed":
                         # For a streamed network, calculate argument dependence
                         arg_deps = network.calc_arg_deps(device)
                         print("Argument interdependence for each stream:"
@@ -668,20 +690,19 @@ def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
                 _, predicted = torch.max(outputs.data, 1)
                 loss = criterion(outputs, labels)
                 total += labels.size(0)
+                loss_sum += loss.item()
+                num_batches += 1
                 if dataset != "simple_dataset":
                     # For simple dataset, it's a regression task, so
                     # accuracy is meaningless
                     correct += (predicted == labels).sum().item()
-                loss_sum += loss.item()
-                num_batches += 1
     # For simple_dataset, test_accuracy will be 0, and should be ignored
     # It is kept in to give the function a consistent interface
     test_accuracy = correct / total
     test_avg_loss = loss_sum / num_batches
-    if _run is not None:
-        if dataset != "simple_dataset":
-            _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
-        _run.log_scalar("test." + test_set + ".loss", test_avg_loss)
+    if dataset != "simple_dataset":
+        _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
+    _run.log_scalar("test." + test_set + ".loss", test_avg_loss)
     return test_accuracy, test_avg_loss
 
 
@@ -720,7 +741,7 @@ def csordas_loss(net_out, data):
 
 @train_exp.automain
 def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
-                 simple_net_kwargs):
+                 simple_math_net_kwargs):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
@@ -728,6 +749,8 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
     net_choice: string choosing which model to train
     optim_func: string specifying whether you're using adam, sgd, etc.
     optim_kwargs: dict of kwargs that you're passing to the optimizer.
+    simple_math_net_kwargs: Dict of kwargs passed on to the simple math net.
+        Only used if net_choice is simple
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
@@ -739,7 +762,7 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
         criterion = nn.CrossEntropyLoss()
 
     if net_choice == "simple":
-        network = mlp_dict[net_choice](**simple_net_kwargs)
+        network = mlp_dict[net_choice](**simple_math_net_kwargs)
     else:
         network = (mlp_dict[net_choice]()
                    if net_type == 'mlp' else cnn_dict[net_choice]())

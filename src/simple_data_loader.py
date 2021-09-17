@@ -13,9 +13,9 @@ class SimpleDataLoader:
         """
         fns ([Tensor(Float)->Tensor(Float)]): List of functions to be
             approximated. Each acts element wise on a tensor
-        input_type (str): One of "single", "multi". Single means a single input
-            x and output f1(x), f2(x),..., multi means a different input for
-            each function
+        input_type (str): One of "single", "streamed". Single means a single
+            input x and output f1(x), f2(x),..., streamed means a different
+            input for each function
         lim (Float): Inputs will be output uniformly between -lim and lim
 
         Each batch is generated iid at random, and this terminates after
@@ -45,7 +45,7 @@ class SimpleDataLoader:
         if self.input_type == "single":
             x = (torch.rand(self.batch_size) - 0.5) * 2 * self.lim
             y = torch.stack([fn(x) for fn in self.fns], axis=1)
-        elif self.input_type == "multi":
+        elif self.input_type == "streamed":
             x = (torch.rand(self.batch_size, self.out) - 0.5) * 2 * self.lim
             y = torch.stack([self.fns[i](x[:, i]) for i in range(self.out)],
                             axis=1)
