@@ -95,6 +95,7 @@ def mlp_config():
         "input_type": "",
         "hidden": None,
     }
+    # TODO: refactor to rename this variable net_kwargs and feed it in whenever we're constructing a network
 
     _ = locals()
     del _
