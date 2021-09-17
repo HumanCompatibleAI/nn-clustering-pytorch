@@ -18,6 +18,8 @@ from src.networks import cnn_dict, mlp_dict
 from src.simple_data_loader import SimpleDataLoader
 from src.tiny_dataset import TinyDataset
 from src.utils import (
+    calc_arg_deps,
+    calc_neuron_sparsity,
     get_weight_modules_from_live_net,
     size_and_multiply_np,
     size_sqrt_divide_np,
@@ -87,7 +89,7 @@ def mlp_config():
     lim = None
     num_batches_train = None
     num_batches_test = None
-    calc_simple_diags = None
+    calc_simple_math_diags = None
     simple_math_net_kwargs = {
         "out": None,
         "input_type": "",
@@ -115,7 +117,7 @@ def simple_math_config():
     lim = 5
     num_batches_train = 300
     num_batches_test = 10
-    calc_simple_diags = True
+    calc_simple_math_diags = True
     simple_math_net_kwargs = {
         "out": len(SIMPLE_FUNCTIONS[fns_name]),
         "input_type": input_type,
@@ -498,8 +500,8 @@ def get_loss(network, data, criterion, dataset, device):
 def train_and_save(network, optimizer, criterion, train_loader,
                    test_loader_dict, device, num_epochs, net_type,
                    pruning_config, cluster_gradient, cluster_gradient_config,
-                   decay_lr, calc_simple_diags, log_interval, save_path_prefix,
-                   dataset, _run):
+                   decay_lr, calc_simple_math_diags, log_interval,
+                   save_path_prefix, dataset, _run):
     """
     Train a neural network, printing out log information, and saving along the
     way.
@@ -533,8 +535,10 @@ def train_and_save(network, optimizer, criterion, train_loader,
                              cluster_gradient is True.
     decay_lr: bool representing whether or not to decay the learning rate over
               training.
-    calc_simple_diags: bool representing whether to calculate the additional
-                       diags for the simple network
+    calc_simple_math_diags: bool for whether to calculate the additional diags
+                            for the simple network. Currently for single this
+                            is just sparsity, for streamed it's sparsity and
+                            argument interdependence
     log_interval: int. how many training steps between logging infodumps.
     save_path_prefix: string containing the relative path to save the model.
                       should not include final '.pth' suffix.
@@ -618,10 +622,10 @@ def train_and_save(network, optimizer, criterion, train_loader,
                 # Simple dataset is a regression task, don't calculate accuracy
                 print("Test loss on " + test_set + " is", test_loss)
                 test_results_dict[test_set] = {'loss': test_loss}
-                if calc_simple_diags:
+                if calc_simple_math_diags:
                     if network.input_type == "streamed":
                         # For a streamed network, calculate argument dependence
-                        arg_deps = network.calc_arg_deps(device)
+                        arg_deps = calc_arg_deps(network, device)
                         print("Argument interdependence for each stream:"
                               " {}".format(arg_deps))
                         test_results_dict[test_set]["arg_deps"] = arg_deps
@@ -630,7 +634,9 @@ def train_and_save(network, optimizer, criterion, train_loader,
                                 "test." + test_set + ".arg_deps"
                                 ".stream_{}".format(c), i)
                     # For all simple networks, find sparsity of hidden layers
-                    sparsity = network.calc_sparsity(device, do_print=True)
+                    sparsity = calc_neuron_sparsity(network,
+                                                    device,
+                                                    do_print=True)
                     test_results_dict[test_set]["sparsity"] = sparsity
                     for c, i in enumerate(sparsity):
                         _run.log_scalar(

@@ -2,9 +2,6 @@ import functools
 import math
 from collections import OrderedDict
 
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -131,71 +128,6 @@ class SimpleMathMLP(nn.Module):
         self.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
         self.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
         return self.activation
-
-    def calc_sparsity(self, device, n=10000, lim=5, do_print=True):
-        """
-        Diagnostic function. Runs the network on n random data points, and
-        returns the proportion of neurons in each layer that are never
-        activated
-        """
-        if self.input_type == "streamed":
-            x = (torch.rand((n, self.out)) - 0.5) * 10
-        else:
-            x = (torch.rand((n, 1)) - 0.5) * 10
-        x = x.to(device)
-        _ = self(x)
-        output = []
-        for i in range(1, 4):
-            activated_neurons = (self.activation[i] != 0).sum(axis=0)
-            num_neurons = (activated_neurons > 0).sum().detach().cpu().numpy()
-            total_neurons = len(activated_neurons)
-            if do_print:
-                print("Layer {} has {} activated neurons out of {}".format(
-                    i, num_neurons, total_neurons))
-            output.append(num_neurons / total_neurons)
-        return output
-
-    def calc_arg_deps(self, device, n=100, show_plot=False, fns=None):
-        """
-        Diagnostic function. For a streamed network, calculates the dependence
-        of each stream on the inputs for other streams.
-        Fixes a value for all stream but one, inputs evenly spaced values for
-        the remaining stream, and runs the network. Repeats for different
-        values of this fixed value and takes the variance for each value in the
-        main stream. Returns the average variance for each stream.
-        """
-        totals = []
-        for pos in range(self.out):
-            n = 100
-            size = 5
-            if show_plot:
-                plt.figure(figsize=(20, 10))
-            outputs = []
-            for fix in np.linspace(-size, size, 21):
-                fix = np.float32(fix)
-                x = torch.linspace(-size, size, n)
-                x_list = []
-                for i in range(self.out):
-                    if i == pos:
-                        x_list.append(x)
-                    else:
-                        x_list.append(torch.tensor([fix for i in range(n)]))
-                x_stack = torch.stack(x_list, axis=1)
-                x_stack = x_stack.to(device)
-                y = self(x_stack)[:, pos]
-                output = y.detach().cpu().numpy()
-                outputs.append(output)
-                if show_plot:
-                    label = fns[pos](x).detach().cpu().numpy()
-                    plt.plot(x.detach().cpu().numpy(),
-                             output - label,
-                             label="network diff {}".format(fix))
-            if show_plot:
-                plt.legend(bbox_to_anchor=(1.05, 1))
-                plt.show()
-            outputs = np.stack(outputs)
-            totals.append(np.mean(np.var(outputs, axis=0)))
-        return totals
 
 
 class SmallCNN(nn.Module):
