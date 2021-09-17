@@ -536,10 +536,10 @@ def train_and_save(network, optimizer, criterion, train_loader,
                              cluster_gradient is True.
     decay_lr: bool representing whether or not to decay the learning rate over
               training.
-    calc_simple_math_diags: bool for whether to calculate the additional diags
-                            for the simple network. Currently for single this
-                            is just sparsity, for streamed it's sparsity and
-                            argument interdependence
+    calc_simple_math_diags: bool for whether to calculate the additional
+                            diagnostics for the simple network. Currently for
+                            single this is just sparsity, for streamed it's
+                            sparsity and argument interdependence
     log_interval: int. how many training steps between logging infodumps.
     save_path_prefix: string containing the relative path to save the model.
                       should not include final '.pth' suffix.
