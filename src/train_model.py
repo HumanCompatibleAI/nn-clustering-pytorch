@@ -12,26 +12,38 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
-from add_mul import AddMul
-from clusterability_gradient import LaplacianEigenvalues
-from networks import cnn_dict, mlp_dict
-from tiny_dataset import TinyDataset
-from utils import (
+from src.add_mul import AddMul
+from src.clusterability_gradient import LaplacianEigenvalues
+from src.networks import cnn_dict, mlp_dict
+from src.simple_data_loader import SimpleDataLoader
+from src.tiny_dataset import TinyDataset
+from src.utils import (
+    calc_arg_deps,
+    calc_neuron_sparsity,
     get_weight_modules_from_live_net,
     size_and_multiply_np,
     size_sqrt_divide_np,
     vector_stretch,
 )
 
-train_exp = Experiment('train_model')
+train_exp = Experiment('train_model', interactive=True)
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
 train_exp.observers.append(FileStorageObserver('training_runs'))
 
 # probably should define a global variable for the list of datasets.
 # maybe in a utils file or something.
 
-# TODO: have a function that tells you the dimensions of the stuff in your
-# dataset
+SIMPLE_FUNCTIONS = {
+    "high_freq_waves":
+    [lambda x: torch.sin(5 * x), lambda x: torch.cos(5 * x)],
+    "many_fns":
+    [torch.sin, lambda x: torch.log(x + 5 + 1e-3), torch.cos, torch.exp],
+    "many_fns_norm": [
+        lambda x: torch.sin(x) / 0.72605824,
+        lambda x: torch.log(x + 5 + 1e-3) / 0.996789,
+        lambda x: torch.cos(x) / 0.6598921, lambda x: torch.exp(x) / 29.747263
+    ],
+}
 
 
 @train_exp.config
@@ -42,7 +54,7 @@ def mlp_config():
     dataset = 'kmnist'
     model_dir = './models/'
     net_type = 'mlp'
-    net_choice = 'small'
+    net_choice = 'mnist'
     # pruning will be as described in Zhu and Gupta 2017, arXiv:1710.01878
     pruning_config = {
         'exponent': 3,
@@ -69,11 +81,27 @@ def mlp_config():
                      if training_run_string != "" else "")
     save_path_prefix = (model_dir + net_type + '_' + dataset +
                         cluster_gradient * '_clust-grad' + save_path_end)
-    # TODO: figure out what info should go in here.
+
+    # Simple Network config - these variables are left blank, and filled in by
+    # using with simple_math_config.
+    fns_name = ""
+    input_type = ""
+    lim = None
+    num_batches_train = None
+    num_batches_test = None
+    calc_simple_math_diags = None
+    simple_math_net_kwargs = {
+        "out": None,
+        "input_type": "",
+        "hidden": None,
+    }
+    # TODO: refactor to rename this variable net_kwargs and feed it in whenever we're constructing a network
+
     _ = locals()
     del _
 
 
+# Named config can be included by python __ with cnn_config - optional set!
 @train_exp.named_config
 def cnn_config():
     net_type = 'cnn'
@@ -81,16 +109,43 @@ def cnn_config():
     del _
 
 
+@train_exp.named_config
+def simple_math_config():
+    dataset = 'simple_dataset'
+    net_choice = 'simple'
+    fns_name = "high_freq_waves"
+    input_type = "single"
+    lim = 5
+    num_batches_train = 300
+    num_batches_test = 10
+    calc_simple_math_diags = True
+    simple_math_net_kwargs = {
+        "out": len(SIMPLE_FUNCTIONS[fns_name]),
+        "input_type": input_type,
+        "hidden": 512,
+    }
+    _ = locals()
+    del _
+
+
+# Capture means 'use sacred config to fill in variables for this function,
+# unless explicitly set when called'
 @train_exp.capture
-def load_datasets(dataset, batch_size):
+def load_datasets(dataset, batch_size, fns_name=""):
     """
     get loaders for training datasets, as well as a description of the classes.
     dataset: string representing the dataset.
     batch_size: int for how many things should be in a batch
+    fns_name: str, only used for simple_dataset. Gives the name of the math
+        functions being modeled
     return pytorch loader for training set, pytorch loader for test set,
     tuple of names of classes.
     """
-    assert dataset in ['mnist', 'kmnist', 'cifar10', 'tiny_dataset', 'add_mul']
+
+    assert dataset in [
+        'mnist', 'kmnist', 'cifar10', 'tiny_dataset', 'add_mul',
+        'simple_dataset'
+    ]
     if dataset == 'mnist':
         return load_mnist(batch_size)
     elif dataset == 'kmnist':
@@ -101,6 +156,9 @@ def load_datasets(dataset, batch_size):
         return load_tiny_dataset(batch_size)
     elif dataset == 'add_mul':
         return load_add_mul(batch_size)
+    elif dataset == "simple_dataset":
+        fns = SIMPLE_FUNCTIONS[fns_name]
+        return load_simple(fns, batch_size=batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
 
@@ -125,7 +183,7 @@ def load_mnist(batch_size):
                                               shuffle=True)
     classes = ('0 - zero', '1 - one', '2 - two', '3 - three', '4 - four',
                '5 - five', '6 - six', '7 - seven', '8 - eight', '9 - nine')
-    return (train_loader, test_loader, classes)
+    return (train_loader, {'all': test_loader}, classes)
 
 
 def load_kmnist(batch_size):
@@ -210,6 +268,16 @@ def load_add_mul(batch_size):
                                              shuffle=True)
     my_dict = {"all": iid_loader, "add": add_loader, "mul": mul_loader}
     return train_loader, my_dict, ()
+
+
+@train_exp.capture
+def load_simple(fns, input_type, lim, batch_size, num_batches_train,
+                num_batches_test):
+    train_loader = SimpleDataLoader(fns, input_type, lim, batch_size,
+                                    num_batches_train)
+    test_loader = SimpleDataLoader(fns, input_type, lim, batch_size,
+                                   num_batches_test)
+    return train_loader, {"all": test_loader}, tuple()
 
 
 def csordas_get_input(data):
@@ -433,7 +501,8 @@ def get_loss(network, data, criterion, dataset, device):
 def train_and_save(network, optimizer, criterion, train_loader,
                    test_loader_dict, device, num_epochs, net_type,
                    pruning_config, cluster_gradient, cluster_gradient_config,
-                   decay_lr, log_interval, save_path_prefix, dataset, _run):
+                   decay_lr, calc_simple_math_diags, log_interval,
+                   save_path_prefix, dataset, _run):
     """
     Train a neural network, printing out log information, and saving along the
     way.
@@ -467,6 +536,10 @@ def train_and_save(network, optimizer, criterion, train_loader,
                              cluster_gradient is True.
     decay_lr: bool representing whether or not to decay the learning rate over
               training.
+    calc_simple_math_diags: bool for whether to calculate the additional
+                            diagnostics for the simple network. Currently for
+                            single this is just sparsity, for streamed it's
+                            sparsity and argument interdependence
     log_interval: int. how many training steps between logging infodumps.
     save_path_prefix: string containing the relative path to save the model.
                       should not include final '.pth' suffix.
@@ -539,9 +612,38 @@ def train_and_save(network, optimizer, criterion, train_loader,
             test_loader = test_loader_dict[test_set]
             test_acc, test_loss = eval_net(network, test_set, test_loader,
                                            device, criterion, dataset, _run)
-            print("Test accuracy on " + test_set + " is", test_acc)
-            print("Test loss on " + test_set + " is", test_loss)
-            test_results_dict[test_set] = {'acc': test_acc, 'loss': test_loss}
+            if dataset != "simple_dataset":
+                print("Test accuracy on " + test_set + " is", test_acc)
+                print("Test loss on " + test_set + " is", test_loss)
+                test_results_dict[test_set] = {
+                    'acc': test_acc,
+                    'loss': test_loss
+                }
+            else:
+                # Simple dataset is a regression task, don't calculate accuracy
+                print("Test loss on " + test_set + " is", test_loss)
+                test_results_dict[test_set] = {'loss': test_loss}
+                if calc_simple_math_diags:
+                    if network.input_type == "streamed":
+                        # For a streamed network, calculate argument dependence
+                        arg_deps = calc_arg_deps(network, device)
+                        print("Argument interdependence for each stream:"
+                              " {}".format(arg_deps))
+                        test_results_dict[test_set]["arg_deps"] = arg_deps
+                        for c, i in enumerate(arg_deps):
+                            _run.log_scalar(
+                                "test." + test_set + ".arg_deps"
+                                ".stream_{}".format(c), i)
+                    # For all simple networks, find sparsity of hidden layers
+                    sparsity = calc_neuron_sparsity(network,
+                                                    device,
+                                                    do_print=True)
+                    test_results_dict[test_set]["sparsity"] = sparsity
+                    for c, i in enumerate(sparsity):
+                        _run.log_scalar(
+                            "test." + test_set + ".sparsity"
+                            ".layer_{}".format(c + 1), i)
+
         if is_pruning and epoch == start_pruning_epoch - 1:
             model_path = save_path_prefix + '_unpruned.pth'
             torch.save(network.state_dict(), model_path)
@@ -578,16 +680,7 @@ def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
     network.eval()
     with torch.no_grad():
         for data in test_loader:
-            if dataset != 'add_mul':
-                inputs, labels = data[0].to(device), data[1].to(device)
-                outputs = network(inputs)
-                _, predicted = torch.max(outputs.data, 1)
-                loss = criterion(outputs, labels)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-                loss_sum += loss.item()
-                num_batches += 1
-            else:
+            if dataset == "add_mul":
                 inputs = csordas_get_input(data)
                 outputs = network(inputs)
                 loss = criterion(outputs, data)
@@ -598,10 +691,24 @@ def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
                     data["output"] == predicted).all(-1).long().sum().item()
                 loss_sum += loss.item()
                 num_batches += 1
-
+            else:
+                inputs, labels = data[0].to(device), data[1].to(device)
+                outputs = network(inputs)
+                _, predicted = torch.max(outputs.data, 1)
+                loss = criterion(outputs, labels)
+                total += labels.size(0)
+                loss_sum += loss.item()
+                num_batches += 1
+                if dataset != "simple_dataset":
+                    # For simple dataset, it's a regression task, so
+                    # accuracy is meaningless
+                    correct += (predicted == labels).sum().item()
+    # For simple_dataset, test_accuracy will be 0, and should be ignored
+    # It is kept in to give the function a consistent interface
     test_accuracy = correct / total
     test_avg_loss = loss_sum / num_batches
-    _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
+    if dataset != "simple_dataset":
+        _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
     _run.log_scalar("test." + test_set + ".loss", test_avg_loss)
     return test_accuracy, test_avg_loss
 
@@ -640,7 +747,8 @@ def csordas_loss(net_out, data):
 
 
 @train_exp.automain
-def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
+def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs,
+                 simple_math_net_kwargs):
     """
     Trains and saves network.
     dataset: string specifying which dataset we're using
@@ -648,22 +756,35 @@ def run_training(dataset, net_type, net_choice, optim_func, optim_kwargs):
     net_choice: string choosing which model to train
     optim_func: string specifying whether you're using adam, sgd, etc.
     optim_kwargs: dict of kwargs that you're passing to the optimizer.
+    simple_math_net_kwargs: Dict of kwargs passed on to the simple math net.
+        Only used if net_choice is simple
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    criterion = nn.CrossEntropyLoss() if dataset != 'add_mul' else csordas_loss
-    my_net = (mlp_dict[net_choice]()
-              if net_type == 'mlp' else cnn_dict[net_choice]())
+    if dataset == "simple_dataset":
+        criterion = nn.MSELoss()
+    elif dataset == "add_mul":
+        criterion = csordas_loss
+    else:
+        criterion = nn.CrossEntropyLoss()
+
+    if net_choice == "simple":
+        network = mlp_dict[net_choice](**simple_math_net_kwargs)
+    else:
+        network = (mlp_dict[net_choice]()
+                   if net_type == 'mlp' else cnn_dict[net_choice]())
+
     if optim_func == 'adam':
         optimizer_ = optim.Adam
     elif optim_func == 'sgd':
         optimizer_ = optim.SGD
     else:
         optimizer_ = optim.SGD
-    optimizer = optimizer_(my_net.parameters(), **optim_kwargs)
+    optimizer = optimizer_(network.parameters(), **optim_kwargs)
+
     train_loader, test_loader_dict, classes = load_datasets()
-    test_results_dict, loss_list = train_and_save(my_net, optimizer, criterion,
-                                                  train_loader,
+    test_results_dict, loss_list = train_and_save(network, optimizer,
+                                                  criterion, train_loader,
                                                   test_loader_dict, device)
     return {
         'test results dict': test_results_dict,

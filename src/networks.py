@@ -1,3 +1,4 @@
+import functools
 import math
 from collections import OrderedDict
 
@@ -9,12 +10,12 @@ import torch.nn.functional as F
 # dicts of networks at end of file
 
 
-class SmallMLP(nn.Module):
+class MnistMLP(nn.Module):
     """
     A simple MLP, likely not very competitive
     """
     def __init__(self):
-        super(SmallMLP, self).__init__()
+        super(MnistMLP, self).__init__()
         # see README for why this is structured weirdly
         self.hidden1 = 512
         self.hidden2 = 512
@@ -69,6 +70,64 @@ class AddMulMLP(nn.Module):
         x = F.relu(self.layer4["fc"](x))
         x = self.layer5["fc"](x)
         return x
+
+
+class SimpleMathMLP(nn.Module):
+    """
+    An MLP used to model simple math functions, eg (x,y) -> (sin(x), cos(y))
+    4 layer MLP, with 3 hidden layers of the same size
+
+    out (int): The number of outputs
+    input_type (str) : "single" means there is a single input, and the output
+        is expected to be (sin(x), cos(x)). "streamed" means there are as many
+        inputs as outputs and a 1-1 mapping, eg (x,y)->(sin(x),cos(y))
+    hidden (int): The size of the hidden layers
+    """
+    def __init__(self, out=2, input_type="single", hidden=512):
+        super(SimpleMathMLP, self).__init__()
+        self.input_type = input_type
+        if input_type == "single":
+            inp = 1
+        elif input_type == "streamed":
+            inp = out
+        self.inp = inp
+        self.out = out
+        self.hidden1 = hidden
+        self.hidden2 = hidden
+        self.hidden3 = hidden
+        self.layer1 = nn.ModuleDict({"fc": nn.Linear(inp, self.hidden1)})
+        self.layer2 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden1, self.hidden2)})
+        self.layer3 = nn.ModuleDict(
+            {"fc": nn.Linear(self.hidden2, self.hidden3)})
+        self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, out)})
+        self.cache_activations()
+
+    def forward(self, x):
+        if len(x.shape) == 1:
+            x = x[:, None]
+        act = F.relu
+        x = act(self.layer1["fc"](x))
+        x = act(self.layer2["fc"](x))
+        x = act(self.layer3["fc"](x))
+        x = self.layer4["fc"](x)
+        return x
+
+    def cache_activations(self):
+        """
+        Creates forward hooks to cache the intermediate activations for each
+        layer.
+        """
+        self.activation = {}
+
+        def hook(model, inpu, output, name):
+            self.activation[name] = F.relu(output.detach())
+
+        self.layer1.fc.register_forward_hook(functools.partial(hook, name=1))
+        self.layer2.fc.register_forward_hook(functools.partial(hook, name=2))
+        self.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
+        self.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
+        return self.activation
 
 
 class SmallCNN(nn.Module):
@@ -345,7 +404,12 @@ def cifar10_vgg19_bn():
     return CIFAR10_VGG(make_layers(cfg['E'], batch_norm=True))
 
 
-mlp_dict = {'small': SmallMLP, 'tiny': TinyMLP, 'add_mul': AddMulMLP}
+mlp_dict = {
+    'mnist': MnistMLP,
+    'tiny': TinyMLP,
+    'add_mul': AddMulMLP,
+    'simple': SimpleMathMLP
+}
 
 cnn_dict = {
     'cifar10_6_bn': CIFAR10_BN_CNN_6,
