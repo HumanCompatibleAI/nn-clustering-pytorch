@@ -33,16 +33,43 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 # probably should define a global variable for the list of datasets.
 # maybe in a utils file or something.
 
-SIMPLE_FUNCTIONS = {
-    "high_freq_waves":
-    [lambda x: torch.sin(5 * x), lambda x: torch.cos(5 * x)],
-    "many_fns":
-    [torch.sin, lambda x: torch.log(x + 5 + 1e-3), torch.cos, torch.exp],
-    "many_fns_norm": [
-        lambda x: torch.sin(x) / 0.72605824,
-        lambda x: torch.log(x + 5 + 1e-3) / 0.996789,
-        lambda x: torch.cos(x) / 0.6598921, lambda x: torch.exp(x) / 29.747263
-    ],
+# Dictionary of simple maths functions. Each normalised to have std = 1
+SINGLE_MATH_FNS_DICT = {
+    "exp": lambda x: torch.exp(x) / 29.8352,
+    "id": lambda x: x / 2.8911,
+    "abs": lambda x: torch.abs(x) / 1.4455,
+    "sin": lambda x: torch.sin(x) / 0.7267,
+    "sin5": lambda x: torch.sin(5 * x) / 0.7090,
+    "cos": lambda x: torch.cos(x) / 0.6605,
+    "cos5": lambda x: torch.cos(5 * x) / 0.7059,
+    "log(x+5)": lambda x: torch.log(x + 5 + 1e-3) / 1.0167,
+    "sqrt(abs(x))": lambda x: torch.sqrt(torch.abs(x)) / 0.5277,
+    "tan(x/4)": lambda x: torch.tan(x / 4) / 1.1903,
+    "sqrt(x+5)": lambda x: torch.sqrt(x + 5) / 0.7473,
+    "square": lambda x: x**2 / 7.4722,
+    "cube": lambda x: x**3 / 47.4110,
+    "quartic": lambda x: x**4 / 167.4167,
+    "exp(sqrt(abs(x)))":
+    lambda x: torch.exp(torch.sqrt(torch.abs(x))) / 2.2921,
+    "cossq": lambda x: torch.cos(x)**2 / 0.3607,
+    "sinsq": lambda x: torch.sin(x)**2 / 0.3607,
+}
+
+MANY_MATH_FNS_DEFN = {
+    "high_freq_waves": ["sin5", "cos5"],
+    "fns_mix_1": ["sin", "log(x+5)", "cos", "exp"],
+    "fns_mix_2":
+    ["tan(x/4)", "abs", "exp(sqrt(abs(x)))", "square", "cube", "sqrt(x+5)"],
+    "fns_mix_3": ["sin5", "cossq", "cube", "sqrt(abs(x))", "exp"],
+    "polys": ["id", "square", "cube", "quartic"],
+}
+
+MANY_MATH_FNS_DICT = {
+    name: [
+        SINGLE_MATH_FNS_DICT[single_name]
+        for single_name in MANY_MATH_FNS_DEFN[name]
+    ]
+    for name in MANY_MATH_FNS_DEFN
 }
 
 
@@ -95,7 +122,8 @@ def mlp_config():
         "input_type": "",
         "hidden": None,
     }
-    # TODO: refactor to rename this variable net_kwargs and feed it in whenever we're constructing a network
+    # TODO: refactor to rename this variable net_kwargs and feed it in whenever
+    # we're constructing a network
 
     _ = locals()
     del _
@@ -115,12 +143,13 @@ def simple_math_config():
     net_choice = 'simple'
     fns_name = "high_freq_waves"
     input_type = "single"
+    batch_size = 250
     lim = 5
     num_batches_train = 300
     num_batches_test = 10
     calc_simple_math_diags = True
     simple_math_net_kwargs = {
-        "out": len(SIMPLE_FUNCTIONS[fns_name]),
+        "out": len(MANY_MATH_FNS_DICT[fns_name]),
         "input_type": input_type,
         "hidden": 512,
     }
@@ -157,7 +186,7 @@ def load_datasets(dataset, batch_size, fns_name=""):
     elif dataset == 'add_mul':
         return load_add_mul(batch_size)
     elif dataset == "simple_dataset":
-        fns = SIMPLE_FUNCTIONS[fns_name]
+        fns = MANY_MATH_FNS_DICT[fns_name]
         return load_simple(fns, batch_size=batch_size)
     else:
         raise ValueError("Wrong name for dataset!")
