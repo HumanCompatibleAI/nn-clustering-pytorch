@@ -39,7 +39,7 @@ def get_weights_in_clusters(label_array, weights_layer_array, labels,
     layer_widths = weights_to_layer_widths(weights)
     # take in a fattened-out label array
     # split it up using layer_widths
-    # use it to identify masks for each label other than "-"
+    # use it to identify masks for each label other than "-1"
     layer_labels = []
     prev_width = 0
     for width in layer_widths:
@@ -64,7 +64,7 @@ def get_weights_in_cluster(layer_labels, weights, lab, all_mask_array):
         bool_mat[np.ix_(out_labels == lab, in_labels == lab)] = True
         bool_mat = np.logical_and(bool_mat, all_mask_array[i]['fc_weights'])
         clust_mask.append(bool_mat)
-    return clust_mask
+    return lab, clust_mask
 
 
 def get_unmasked_neurons(mask_layer_array):
@@ -94,7 +94,7 @@ def get_unmasked_neurons(mask_layer_array):
 
 def get_unique_unmasked_neurons(mask_array, background_arrays):
     if background_arrays == []:
-        return mask_array
+        return get_unmasked_neurons(mask_array)
     else:
         mask_indicator = get_unmasked_neurons(mask_array)
         background_indicators = [
@@ -133,10 +133,11 @@ def get_intersection_props_neurons(neuron_indicator, label_array, cluster):
     iou = intersection / union
     iomask = intersection / num_unmasked_neurons
     ioclust = intersection / num_in_cluster
-    return iou, iomask, ioclust
+    return cluster, num_in_cluster, iou, iomask, ioclust
 
 
-def get_intersection_props_masks(cluster_mask_array, mask_array):
+def get_intersection_props_masks(cluster_mask_tup, mask_array):
+    cluster_id, cluster_mask_array = cluster_mask_tup
     assert len(cluster_mask_array) == len(mask_array)
     num_in_mask = 0
     num_in_clust = 0
@@ -153,8 +154,14 @@ def get_intersection_props_masks(cluster_mask_array, mask_array):
         union += len(union_mask[union_mask])
     iou = intersection / union
     iomask = intersection / num_in_mask
-    ioclust = intersection / num_in_clust
-    return iou, iomask, ioclust
+    ioclust = 0 if num_in_clust == 0 else intersection / num_in_clust
+    if iou == 0 and ioclust != 0:
+        print("iou:", iou)
+        print("ioclust:", ioclust)
+        print("intersection:", intersection)
+        print("union:", union)
+        ValueError("This makes no sense")
+    return cluster_id, num_in_clust, iou, iomask, ioclust
 
 
 def get_mask_proportions(mask_array, all_mask_array):
