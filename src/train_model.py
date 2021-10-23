@@ -33,6 +33,8 @@ train_exp.observers.append(FileStorageObserver('training_runs'))
 # TODO: have a function that tells you the dimensions of the stuff in your
 # dataset
 
+# TODO: put the datasets in a different file.
+
 
 @train_exp.config
 def mlp_config():
@@ -125,7 +127,7 @@ def load_mnist(batch_size):
                                               shuffle=True)
     classes = ('0 - zero', '1 - one', '2 - two', '3 - three', '4 - four',
                '5 - five', '6 - six', '7 - seven', '8 - eight', '9 - nine')
-    return (train_loader, test_loader, classes)
+    return (train_loader, {'all': test_loader}, classes)
 
 
 def load_kmnist(batch_size):
