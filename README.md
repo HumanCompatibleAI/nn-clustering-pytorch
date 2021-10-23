@@ -33,3 +33,5 @@ For Sequential modules:
 - One layer should contain at most one fully-connected or convolutional module.
 
 In both cases, there can only be one batch norm module between two linear transformations. For examples of networks that meet these specifications, see `src/networks.py`.
+
+TODO: fix naming of `blah_pytorch` functions that don't return pytorch objects
