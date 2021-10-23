@@ -20,6 +20,7 @@ pandas = "*"
 
 [dev-packages]
 pre-commit = "*"
+notebook = ">=6.4.1"
 
 [requires]
 python_version = "3.8"
