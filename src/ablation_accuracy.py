@@ -7,9 +7,10 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
+from graph_utils import np_layer_array_to_graph_weights_array
 from networks import cnn_dict, mlp_dict
 from train_model import csordas_loss, eval_net, load_datasets
-from utils import get_weight_tensors_from_state_dict
+from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 
 # can I even export eval_net? will that mess me over somehow with the _run
 # thing?
@@ -168,6 +169,10 @@ def masks_from_clusters(num_clusters, cluster_labels, isolation_indicator,
     return clust_masks
 
 
+def matches(net_type, module_type):
+    return (net_type, module_type) in [("mlp", "fc"), ("cnn", "conv")]
+
+
 def apply_mask_to_net(mask_array, state_dict, net_type):
     """
     Mask out weights according to a given mask_array
@@ -189,9 +194,6 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
             if module_type in ["fc", "conv"]:
                 layer_names.append((layer_name, module_type))
 
-    def matches(net_type, module_type):
-        return (net_type, module_type) in [("mlp", "fc"), ("cnn", "conv")]
-
     # mask out the right layers
     mask_ind = 0
     for i, layer_tup in enumerate(layer_names):
@@ -212,43 +214,36 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
 # next: load stuff from saved files, get test set, find accuracy of
 # ablated nets.
 
-# what I need to get:
+# what I need to get from json:
 # - state_dict
-# - layer_widths (should be able to get from state dict)
 # - cluster_labels
 # - isolation_indicator
 # - network class (to turn state_dict into network)
-# - test set
+# - test set(s)
 # - net_type
-
-# tasks to perform:
-# - load all those things from saved file - but how are you going to get the
-#   network class...
-# - use cluster_labels to get num_clusters
-# - layer_widths comes from, i guess, extracting weights from state_dict using
-#   net_type? seems wasteful but ok
-# - make all the masks
-# - for each mask: mask out the network, get test accuracy, including on
-#   sub-tasks.
-
-
-def magic(x):
-    return x
 
 
 def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
                             net_type, net_name, dataset, batch_size):
+    """
+    TODO document
+    """
     num_clusters = len(set(cluster_labels))
+    # get the layer widths
     weights_array = get_weight_tensors_from_state_dict(state_dict)
     for layer_dict in weights_array:
         for key, val in layer_dict.items():
             if isinstance(val, torch.Tensor):
                 layer_dict[key] = val.detach().cpu().numpy()
+    graph_weights = np_layer_array_to_graph_weights_array(
+        weights_array, net_type)
+    layer_widths = weights_to_layer_widths(graph_weights)
 
-    layer_widths = magic(weights_array)
-    # TODO: less magic
+    # get the masks
     mask_arrays = masks_from_clusters(num_clusters, cluster_labels,
                                       isolation_indicator, layer_widths)
+
+    # get masked accuracy stats
     net_dict = mlp_dict if net_type == 'mlp' else cnn_dict
     net_class = net_dict[net_name]
     device = (torch.device("cuda")
