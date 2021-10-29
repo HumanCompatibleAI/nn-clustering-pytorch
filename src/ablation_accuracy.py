@@ -1,4 +1,5 @@
 import copy
+import json
 
 import numpy as np
 import torch
@@ -25,7 +26,9 @@ ablation_acc_test.observers.append(FileStorageObserver('ablation_acc_runs'))
 
 @ablation_acc_test.config
 def basic_config():
-    blah = 'blah'
+    training_dir = './training_runs/281/'
+    shuffle_cluster_dir = './shuffle_clust_runs/114/'
+    is_pruned = True
     _ = locals()
     del _
 
@@ -73,7 +76,7 @@ def mask_from_cluster(cluster, cluster_labels, isolation_indicator,
     padded_labels = pad_labels(cluster_labels, isolation_indicator)
     layer_labels = split_labels(padded_labels, layer_widths)
     clust_mask = []
-    for i in range(len(layer_widths)):
+    for i in range(len(layer_widths) - 1):
         this_width = layer_widths[i]
         next_width = layer_widths[i + 1]
         mask = layer_mask_from_labels_numpy(this_width, next_width,
@@ -190,37 +193,39 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
         assert len(name_parts) == 3, name
         layer_name = name_parts[0]
         module_type = name_parts[1]
-        if layer_name not in layer_names:
-            if module_type in ["fc", "conv"]:
+        attr_name = name_parts[2]
+        if layer_name not in map(lambda x: x[0], layer_names):
+            if module_type in ["fc", "conv"] and attr_name == "weight":
                 layer_names.append((layer_name, module_type))
 
     # mask out the right layers
     mask_ind = 0
+    in_right_block = False
+    num_in_block = 0
     for i, layer_tup in enumerate(layer_names):
         layer_name = layer_tup[0]
         module_type = layer_tup[1]
         weight_name = layer_name + "." + module_type + ".weight"
-        if matches(net_type, module_type) and i != len(layer_names) - 1:
-            mask_tens = mask_array[mask_ind]
-            mask_ind += 1
-            weight = state_dict_copy[weight_name]
-            shaped_mask_tens = mask_tens
-            for i in range(mask_tens.dim, weight.dim):
-                shaped_mask_tens = torch.unsqueeze(shaped_mask_tens, -1)
-            state_dict_copy[weight_name] = torch.mul(shaped_mask_tens, weight)
+        if not in_right_block and matches(net_type, module_type):
+            in_right_block = True
+        if in_right_block:
+            if not matches(net_type, module_type) or i == len(layer_names) - 1:
+                break
+            if net_type != "cnn" or num_in_block != 0:
+                mask_tens = mask_array[mask_ind]
+                mask_ind += 1
+                weight = state_dict_copy[weight_name]
+                shaped_mask_tens = mask_tens
+                for _ in range(mask_tens.dim(), weight.dim()):
+                    shaped_mask_tens = torch.unsqueeze(shaped_mask_tens, -1)
+                state_dict_copy[weight_name] = torch.mul(
+                    shaped_mask_tens, weight)
+                num_in_block += 1
     return state_dict_copy
 
 
 # next: load stuff from saved files, get test set, find accuracy of
 # ablated nets.
-
-# what I need to get from json:
-# - state_dict
-# - cluster_labels
-# - isolation_indicator
-# - network class (to turn state_dict into network)
-# - test set(s)
-# - net_type
 
 
 def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
@@ -266,5 +271,47 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
     return cluster_stats
 
 
-# current TODOS: get layer width nicely, and then wrap this up into something
-# that can run when given a results json
+# what I need to get from json:
+# - state_dict - will be at save_path.pth and also should be in directory as
+#   pth --- apply torch.load to relevant path
+# - cluster_labels - in results for shuffle+cluster runs, inside results dict
+#   with key 'labels'
+# - isolation_indicator - in results for shuffle+cluster runs, inside results
+#   dict with key 'isolation_indicator'
+# - network class (to turn state_dict into network) - an arg to train_model
+#   is net_choice, which picks the network out of mlp_dict or cnn_dict.
+#   that's in config.json
+# - dataset - in config.json
+# - net_type - in config.json
+
+# so: need training run config.json, shuffle_and_cluster run.json, and path -
+# but you can get that from save_path_prefix in config.json, once you know if
+# you want the pruned or unpruned model.
+
+
+@ablation_acc_test.automain
+def run_ablation_accuracy(training_dir, shuffle_cluster_dir, is_pruned):
+    """
+    TODO documentation
+    """
+    with open(training_dir + "config.json") as f:
+        training_config = json.load(f)
+    with open(shuffle_cluster_dir + "run.json") as f:
+        shuffle_cluster_run = json.load(f)
+    cluster_labels = shuffle_cluster_run['result']['labels']
+    isolation_indicator = shuffle_cluster_run['result']['isolation_indicator']
+    net_type = training_config['net_type']
+    dataset = training_config['dataset']
+    net_name = training_config['net_choice']
+    batch_size = training_config['batch_size']
+    save_path_prefix = training_config['save_path_prefix']
+    save_path = save_path_prefix + ('.pth' if is_pruned else '_unpruned.pth')
+    state_dict = torch.load(save_path)
+    cluster_stats = get_ablation_accuracies(cluster_labels,
+                                            isolation_indicator, state_dict,
+                                            net_type, net_name, dataset,
+                                            batch_size)
+    return cluster_stats
+
+
+# I think this should be done. Next steps: run, debug, document.
