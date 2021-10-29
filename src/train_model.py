@@ -543,6 +543,8 @@ def train_and_save(network, optimizer, criterion, train_loader,
                                            device, criterion, dataset, _run)
             print("Test accuracy on " + test_set + " is", test_acc)
             print("Test loss on " + test_set + " is", test_loss)
+            _run.log_scalar("test." + test_set + ".accuracy", test_acc)
+            _run.log_scalar("test." + test_set + ".loss", test_loss)
             test_results_dict[test_set] = {'acc': test_acc, 'loss': test_loss}
         if is_pruning and epoch == start_pruning_epoch - 1:
             model_path = save_path_prefix + '_unpruned.pth'
@@ -560,7 +562,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
     return test_results_dict, loss_list
 
 
-def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
+def eval_net(network, test_set, test_loader, device, criterion, dataset):
     """
     gets test loss and accuracy
     network: network to get loss of
@@ -603,8 +605,6 @@ def eval_net(network, test_set, test_loader, device, criterion, dataset, _run):
 
     test_accuracy = correct / total
     test_avg_loss = loss_sum / num_batches
-    _run.log_scalar("test." + test_set + ".accuracy", test_accuracy)
-    _run.log_scalar("test." + test_set + ".loss", test_avg_loss)
     return test_accuracy, test_avg_loss
 
 
