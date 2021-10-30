@@ -18,6 +18,7 @@ urllib3 = ">=1.26.5"
 seaborn = "*"
 pandas = "*"
 jupyter = "*"
+matplotlib = "*"
 
 [dev-packages]
 pre-commit = "*"
