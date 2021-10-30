@@ -13,11 +13,11 @@ from networks import cnn_dict, mlp_dict
 from train_model import csordas_loss, eval_net, load_datasets
 from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 
-# can I even export eval_net? will that mess me over somehow with the _run
-# thing?
-
-# TODO: add imports as necessary
 # Warning: don't apply to network while pruning is happening.
+
+# TODOS:
+# - refactor compare_masks_clusters to share functions with this file
+#   (probably by adding cluster_utils file)
 
 ablation_acc_test = Experiment('ablation_acc_test')
 ablation_acc_test.captured_out_filter = apply_backspaces_and_linefeeds
@@ -31,31 +31,6 @@ def basic_config():
     is_pruned = True
     _ = locals()
     del _
-
-
-# helper functions:
-# - get mask from cluster
-# - apply mask to live net (almost in utils but not quite)
-# - ... run whole experiment? this seems pretty easy!
-
-# so, I probably need the cluster as well as the deleted neurons
-# spectral_cluster_model dumps ((n_cut_val, clustering_labels),
-#                               isolation_indicator), so does
-# shuffle_and_cluster (in a different way)
-# so I can use those, and assume that I get a path to the run.json
-# (let's say in dict form)
-# actually, I should just edit spectral_cluster_model to return a similar dict.
-
-# to apply masks, can just multiply tensors.
-
-# one tricky thing: we only cluster a subset of neurons in general (for e.g.
-# CNNs)
-
-# TODOS:
-# - refactor compare_masks_clusters to share functions with this file
-#   (probably by adding cluster_utils file)
-# - also add documentation to compare_masks_clusters
-# - change how spectral_cluster_model outputs stuff
 
 
 def mask_from_cluster(cluster, cluster_labels, isolation_indicator,
@@ -224,14 +199,26 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
     return state_dict_copy
 
 
-# next: load stuff from saved files, get test set, find accuracy of
-# ablated nets.
-
-
 def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
                             net_type, net_name, dataset, batch_size):
     """
-    TODO document
+    Take a state dict, ablate each cluster in that network, and check accuracy
+    post-ablation on all test sets
+    cluster_labels: array of ints, entry n giving the cluster of neuron n.
+        Should not yet be padded.
+    isolation_indicator: array, entry n being 1 if neuron n of the network is
+        isolated and 0 otherwise.
+    state_dict: a pytorch state dict (which should be an ordered dict)
+    net_type: string 'mlp' or 'cnn'
+    net_name: string specifying the network, in conjunction with net_type.
+        Will be used to index the dicts in src/networks.py to get a net class.
+    dataset: string specifying the dataset
+    batch_size: int specifying the test set batch size
+        (I wish I didn't need this but I do)
+    Returns: dict. keys are ints specifying clusters. values are dicts, whose
+        keys are names of test sets (strings) and whose values are tuples of
+        floats: the accuracy and loss of the network with that cluster ablated
+        on that test set.
     """
     num_clusters = len(set(cluster_labels))
     # get the layer widths
@@ -271,28 +258,15 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
     return cluster_stats
 
 
-# what I need to get from json:
-# - state_dict - will be at save_path.pth and also should be in directory as
-#   pth --- apply torch.load to relevant path
-# - cluster_labels - in results for shuffle+cluster runs, inside results dict
-#   with key 'labels'
-# - isolation_indicator - in results for shuffle+cluster runs, inside results
-#   dict with key 'isolation_indicator'
-# - network class (to turn state_dict into network) - an arg to train_model
-#   is net_choice, which picks the network out of mlp_dict or cnn_dict.
-#   that's in config.json
-# - dataset - in config.json
-# - net_type - in config.json
-
-# so: need training run config.json, shuffle_and_cluster run.json, and path -
-# but you can get that from save_path_prefix in config.json, once you know if
-# you want the pruned or unpruned model.
-
-
 @ablation_acc_test.automain
 def run_ablation_accuracy(training_dir, shuffle_cluster_dir, is_pruned):
     """
-    TODO documentation
+    Gets all the relevant data from config/run files, and runs
+    get_ablation_accuracies.
+    training_dir: string specifying the sacred directory of the relevant
+        training run.
+    shuffle_cluster_dir: string specifying the sacred directory of the
+        relevant shuffle_and_cluster run.
     """
     with open(training_dir + "config.json") as f:
         training_config = json.load(f)
@@ -312,6 +286,3 @@ def run_ablation_accuracy(training_dir, shuffle_cluster_dir, is_pruned):
                                             net_type, net_name, dataset,
                                             batch_size)
     return cluster_stats
-
-
-# I think this should be done. Next steps: run, debug, document.
