@@ -12,12 +12,12 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
-from src.add_mul import AddMul
-from src.clusterability_gradient import LaplacianEigenvalues
-from src.networks import cnn_dict, mlp_dict
-from src.simple_data_loader import SimpleDataLoader
-from src.tiny_dataset import TinyDataset
-from src.utils import (
+from add_mul import AddMul
+from clusterability_gradient import LaplacianEigenvalues
+from networks import cnn_dict, mlp_dict
+from simple_data_loader import SimpleDataLoader
+from tiny_dataset import TinyDataset
+from utils import (
     calc_arg_deps,
     calc_neuron_sparsity,
     get_weight_modules_from_live_net,
