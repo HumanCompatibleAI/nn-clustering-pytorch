@@ -12,7 +12,7 @@ compare_masks_clusters.observers.append(
     FileStorageObserver('compare_masks_clusters'))
 
 # NB: so far, this code only works for MLPs
-# TODO: make docstrings nicer
+# TODO: make docstrings exist
 
 
 @compare_masks_clusters.config
