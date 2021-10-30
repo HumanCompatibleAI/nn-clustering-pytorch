@@ -155,6 +155,10 @@ def run_experiment(weights_path, mask_path, net_type, num_clusters,
     layer_array = (load_model_weights_pytorch(weights_path, device)
                    if mask_path is None else load_masked_weights_pytorch(
                        weights_path, mask_path, device))
-    return layer_array_to_clustering_and_quality(layer_array, net_type,
-                                                 num_clusters, eigen_solver,
-                                                 normalize_weights, epsilon)
+    (n_cut_val, clustering_labels), isolation_indicator = \
+        layer_array_to_clustering_and_quality(layer_array, net_type,
+                                              num_clusters, eigen_solver,
+                                              normalize_weights, epsilon)
+    return n_cut_val, clustering_labels.tolist(), isolation_indicator, [
+        i.tolist() for i in np.unique(clustering_labels, return_counts=True)
+    ]
