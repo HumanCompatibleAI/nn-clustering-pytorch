@@ -614,7 +614,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
         for test_set in test_loader_dict:
             test_loader = test_loader_dict[test_set]
             test_acc, test_loss = eval_net(network, test_set, test_loader,
-                                           device, criterion, dataset, _run)
+                                           device, criterion, dataset)
             if dataset != "simple_dataset":
                 print("Test accuracy on " + test_set + " is", test_acc)
                 print("Test loss on " + test_set + " is", test_loss)
