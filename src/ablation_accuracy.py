@@ -16,6 +16,9 @@ from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 # Warning: don't apply to network while pruning is happening.
 
 # TODOS:
+# - Fix numpy/pytorch naming scheme so that I can make
+#   load_masked_weights_pytorch for real
+# - refactor code to do this masking.
 # - refactor compare_masks_clusters to share functions with this file
 #   (probably by adding cluster_utils file)
 
@@ -28,6 +31,7 @@ ablation_acc_test.observers.append(FileStorageObserver('ablation_acc_runs'))
 def basic_config():
     training_dir = './training_runs/281/'
     shuffle_cluster_dir = './shuffle_clust_runs/114/'
+    pre_mask_path = None
     is_pruned = True
     _ = locals()
     del _
@@ -259,12 +263,15 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
 
 
 @ablation_acc_test.automain
-def run_ablation_accuracy(training_dir, shuffle_cluster_dir, is_pruned):
+def run_ablation_accuracy(training_dir, pre_mask_path, shuffle_cluster_dir,
+                          is_pruned):
     """
     Gets all the relevant data from config/run files, and runs
     get_ablation_accuracies.
     training_dir: string specifying the sacred directory of the relevant
         training run.
+    pre_mask_path: string specifying the location of a mask to pre-apply, or
+        None if no mask should be pre-applied.
     shuffle_cluster_dir: string specifying the sacred directory of the
         relevant shuffle_and_cluster run.
     """

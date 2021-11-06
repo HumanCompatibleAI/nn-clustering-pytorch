@@ -5,7 +5,7 @@ import torch
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 
-from utils import load_model_weights_pytorch, weights_to_layer_widths
+from utils import load_model_weights_numpy, weights_to_layer_widths
 
 compare_masks_clusters = Experiment('compare_masks_clusters')
 compare_masks_clusters.observers.append(
@@ -193,12 +193,12 @@ def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
                    run_json_path):
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    mask_array = load_model_weights_pytorch(mask_path, device)
+    mask_array = load_model_weights_numpy(mask_path, device)
     other_mask_arrays = [
-        load_model_weights_pytorch(other_path, device)
+        load_model_weights_numpy(other_path, device)
         for other_path in other_mask_paths
     ]
-    all_mask_array = load_model_weights_pytorch(all_mask_path, device)
+    all_mask_array = load_model_weights_numpy(all_mask_path, device)
     print(get_mask_proportions(mask_array, all_mask_array))
     neuron_stats = get_unique_unmasked_neurons(mask_array, other_mask_arrays)
 
@@ -212,7 +212,7 @@ def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
         for lab in labels
     ]
 
-    weights_layer_array = load_model_weights_pytorch(weights_path, device)
+    weights_layer_array = load_model_weights_numpy(weights_path, device)
     clust_masks = get_weights_in_clusters(label_array, weights_layer_array,
                                           labels, all_mask_array)
     weight_ious_iomasks_ioclusts = [

@@ -144,9 +144,7 @@ def check_layer_names(layer_array):
             assert layer_names[i] != layer_names[j], layer_name_problem
 
 
-def load_model_weights_pytorch(model_path,
-                               pytorch_device,
-                               include_biases=False):
+def load_model_weights_numpy(model_path, pytorch_device, include_biases=False):
     """
     Take a pytorch saved model state dict, and return an array of the weight
     tensors as numpy arrays
@@ -168,10 +166,10 @@ def load_model_weights_pytorch(model_path,
     return layer_array
 
 
-def load_masked_weights_pytorch(model_path,
-                                mask_path,
-                                pytorch_device,
-                                include_biases=False):
+def load_masked_weights_numpy(model_path,
+                              mask_path,
+                              pytorch_device,
+                              include_biases=False):
     """
     Load model weights as well as masks for tensors in your model, and return
     numpy ndarrays containing weights with masks applied.
@@ -183,10 +181,10 @@ def load_masked_weights_pytorch(model_path,
     returns: an array of dicts containing layer names and various numpy
              tensors
     """
-    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device,
-                                                   include_biases)
-    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device,
-                                                  include_biases)
+    model_layer_array = load_model_weights_numpy(model_path, pytorch_device,
+                                                 include_biases)
+    mask_layer_array = load_model_weights_numpy(mask_path, pytorch_device,
+                                                include_biases)
     assert len(model_layer_array) == len(mask_layer_array)
     new_layer_array = []
     for i in range(len(model_layer_array)):
@@ -205,10 +203,10 @@ def load_masked_weights_pytorch(model_path,
     return new_layer_array
 
 
-def load_masked_out_weights_pytorch(model_path,
-                                    mask_path,
-                                    pytorch_device,
-                                    include_biases=False):
+def load_masked_out_weights_numpy(model_path,
+                                  mask_path,
+                                  pytorch_device,
+                                  include_biases=False):
     """
     Load model weights as well as masks for tensors in your model, and return
     numpy ndarrays containing weights that would be hidden by the mask.
@@ -220,10 +218,10 @@ def load_masked_out_weights_pytorch(model_path,
     returns: an array of dicts containing layer names and various numpy
              tensors
     """
-    model_layer_array = load_model_weights_pytorch(model_path, pytorch_device,
-                                                   include_biases)
-    mask_layer_array = load_model_weights_pytorch(mask_path, pytorch_device,
-                                                  include_biases)
+    model_layer_array = load_model_weights_numpy(model_path, pytorch_device,
+                                                 include_biases)
+    mask_layer_array = load_model_weights_numpy(mask_path, pytorch_device,
+                                                include_biases)
     assert len(model_layer_array) == len(mask_layer_array)
     new_layer_array = []
     for i in range(len(model_layer_array)):

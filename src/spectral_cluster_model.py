@@ -13,7 +13,7 @@ from graph_utils import (
     np_layer_array_to_graph_weights_array,
     weights_to_graph,
 )
-from utils import load_masked_weights_pytorch, load_model_weights_pytorch
+from utils import load_masked_weights_numpy, load_model_weights_numpy
 
 clust_exp = Experiment('cluster_model')
 clust_exp.captured_out_filter = apply_backspaces_and_linefeeds
@@ -152,8 +152,8 @@ def run_experiment(weights_path, mask_path, net_type, num_clusters,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    layer_array = (load_model_weights_pytorch(weights_path, device)
-                   if mask_path is None else load_masked_weights_pytorch(
+    layer_array = (load_model_weights_numpy(weights_path, device)
+                   if mask_path is None else load_masked_weights_numpy(
                        weights_path, mask_path, device))
     (n_cut_val, clustering_labels), isolation_indicator = \
         layer_array_to_clustering_and_quality(layer_array, net_type,

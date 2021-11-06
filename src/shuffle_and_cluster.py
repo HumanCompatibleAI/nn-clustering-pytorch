@@ -10,8 +10,8 @@ from spectral_cluster_model import layer_array_to_clustering_and_quality
 from utils import (
     compute_percentile,
     get_random_int_time,
-    load_masked_weights_pytorch,
-    load_model_weights_pytorch,
+    load_masked_weights_numpy,
+    load_model_weights_numpy,
 )
 
 shuffle_and_clust = Experiment('shuffle_and_clust')
@@ -156,8 +156,8 @@ def run_experiment(weights_path, mask_path, net_type, num_clusters,
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    layer_array = (load_model_weights_pytorch(weights_path, device)
-                   if mask_path is None else load_masked_weights_pytorch(
+    layer_array = (load_model_weights_numpy(weights_path, device)
+                   if mask_path is None else load_masked_weights_numpy(
                        weights_path, mask_path, device))
     big_tup = layer_array_to_clustering_and_quality(layer_array, net_type,
                                                     num_clusters, eigen_solver,
