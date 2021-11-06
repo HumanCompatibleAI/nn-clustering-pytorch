@@ -130,13 +130,13 @@ class SimpleMathMLP(nn.Module):
         return self.activation
 
 
-class SmallCNN(nn.Module):
+class MnistCNN(nn.Module):
     """
     A simple CNN, taken from the KMNIST benchmark:
     https://github.com/rois-codh/kmnist/blob/master/benchmarks/kuzushiji_mnist_cnn.py
     """
     def __init__(self):
-        super(SmallCNN, self).__init__()
+        super(MnistCNN, self).__init__()
         self.hidden1 = 32
         self.hidden2 = 64
         self.hidden3 = 128
@@ -414,7 +414,7 @@ mlp_dict = {
 cnn_dict = {
     'cifar10_6_bn': CIFAR10_BN_CNN_6,
     'cifar10_6': CIFAR10_CNN_6,
-    'small': SmallCNN,
+    'mnist': MnistCNN,
     'cifar10_vgg11': cifar10_vgg11,
     'cifar10_vgg11_bn': cifar10_vgg11_bn,
     'cifar10_vgg13': cifar10_vgg13,
