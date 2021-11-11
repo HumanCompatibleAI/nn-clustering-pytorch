@@ -16,9 +16,7 @@ from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 # Warning: don't apply to network while pruning is happening.
 
 # TODOS:
-# - Fix numpy/pytorch naming scheme so that I can make
-#   load_masked_weights_pytorch for real
-# - refactor code to do this masking.
+# - deal with Csordas true/false masks
 # - refactor compare_masks_clusters to share functions with this file
 #   (probably by adding cluster_utils file)
 
@@ -29,16 +27,16 @@ ablation_acc_test.observers.append(FileStorageObserver('ablation_acc_runs'))
 
 @ablation_acc_test.config
 def basic_config():
-    training_dir = './training_runs/281/'
-    shuffle_cluster_dir = './shuffle_clust_runs/114/'
+    training_dir = './training_runs/105/'
+    shuffle_cluster_dir = './shuffle_clust_runs/82/'
     pre_mask_path = None
-    is_pruned = True
+    is_pruned = False
     _ = locals()
     del _
 
 
 def mask_from_cluster(cluster, cluster_labels, isolation_indicator,
-                      layer_widths):
+                      layer_widths, net_type):
     """
     Make a pytorch mask tensor for the weights within a cluster.
     cluster: int, representing which cluster to deal with
@@ -49,11 +47,15 @@ def mask_from_cluster(cluster, cluster_labels, isolation_indicator,
     layer_widths: array of ints, entry i being the width of layer i of the net.
         This should range only over the parts of the net that clustering is
         applied to.
-    Returns: array of pytorch tensors, with entry 0 for those going between
-        neurons in the selected cluster and 1 otherwise.
+    net_type: string, indicating whether the network is an mlp or a cnn
+    Returns: array of pytorch tensors, with entry False for those going between
+        neurons in the selected cluster and True otherwise.
     """
+    # DANGER: we don't really use the layer name field, which might mean we
+    # make mistakes.
     padded_labels = pad_labels(cluster_labels, isolation_indicator)
     layer_labels = split_labels(padded_labels, layer_widths)
+    weights_name = net_type_to_weights_name(net_type)
     clust_mask = []
     for i in range(len(layer_widths) - 1):
         this_width = layer_widths[i]
@@ -62,8 +64,18 @@ def mask_from_cluster(cluster, cluster_labels, isolation_indicator,
                                             layer_labels[i],
                                             layer_labels[i + 1], cluster)
         torch_mask = torch.from_numpy(mask)
-        clust_mask.append(torch_mask)
+        clust_mask.append({'layer': str(i), weights_name: torch_mask})
     return clust_mask
+
+
+def net_type_to_weights_name(net_type):
+    """
+    Take a net_type, return the name of fields in layer dicts that will return
+    us weight tensors
+    net_type: string, indicating whether the network is an mlp or a cnn
+    Returns: string
+    """
+    return 'fc_weights' if net_type == 'mlp' else 'conv_weights'
 
 
 def pad_labels(cluster_labels, isolation_indicator):
@@ -115,19 +127,19 @@ def layer_mask_from_labels_numpy(in_width, out_width, in_labels, out_labels,
     out_labels: array of ints, element i is the cluster label of neuron i of
         the output layer
     cluster: int, representing which cluster to make a mask for
-    Returns: an out_width by in_width numpy array, with zeros for weights
-        between two neurons in the selected cluster, and ones in other
+    Returns: an out_width by in_width numpy array, with Falses for weights
+        between two neurons in the selected cluster, and Trues in other
         locations.
     """
-    my_mat = np.ones((out_width, in_width))
+    my_mat = np.fill((out_width, in_width), True)
     in_labels_np = np.array(in_labels)
     out_labels_np = np.array(out_labels)
-    my_mat[np.ix_(out_labels_np == cluster, in_labels_np == cluster)] = 0
+    my_mat[np.ix_(out_labels_np == cluster, in_labels_np == cluster)] = False
     return my_mat
 
 
 def masks_from_clusters(num_clusters, cluster_labels, isolation_indicator,
-                        layer_widths):
+                        layer_widths, net_type):
     """
     Make a pytorch mask tensor for each cluster that masks out the weights
     within that cluster.
@@ -139,6 +151,7 @@ def masks_from_clusters(num_clusters, cluster_labels, isolation_indicator,
     layer_widths: array of ints, entry i being the width of layer i of the net.
         This should range only over the parts of the net that clustering is
         applied to.
+    net_type: string, indicating whether the network is an mlp or a cnn
     Returns: array of arrays of pytorch tensors. ith array is for the ith
         cluster. jth sub-array is for the jth weights layer. entry 0 for
         weights going between neurons in the selected cluster, 1 otherwise.
@@ -147,7 +160,7 @@ def masks_from_clusters(num_clusters, cluster_labels, isolation_indicator,
     for i in range(num_clusters):
         clust_masks.append(
             mask_from_cluster(i, cluster_labels, isolation_indicator,
-                              layer_widths))
+                              layer_widths, net_type))
     return clust_masks
 
 
@@ -155,11 +168,21 @@ def matches(net_type, module_type):
     return (net_type, module_type) in [("mlp", "fc"), ("cnn", "conv")]
 
 
+def net_type_to_bias_name(net_type):
+    """
+    Take a net_type, return the name of fields in layer dicts that will return
+    us bias tensors
+    net_type: string, indicating whether the network is an mlp or a cnn
+    Returns: string
+    """
+    return 'fc_biases' if net_type == 'mlp' else 'conv_biases'
+
+
 def apply_mask_to_net(mask_array, state_dict, net_type):
     """
     Mask out weights according to a given mask_array
-    mask_array: array of pytorch tensors, which should be masks for layers of a
-        network.
+    mask_array: array of dicts containing pytorch tensors, which should be
+        masks for layers of a network.
     state_dict: a pytorch state dict (which should be an ordered dict)
     net_type: string 'mlp' or 'cnn'
     returns: a new state_dict.
@@ -178,6 +201,8 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
                 layer_names.append((layer_name, module_type))
 
     # mask out the right layers
+    # if we were using layer names nicely, this checking code could be much
+    # simpler...
     mask_ind = 0
     in_right_block = False
     num_in_block = 0
@@ -185,20 +210,30 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
         layer_name = layer_tup[0]
         module_type = layer_tup[1]
         weight_name = layer_name + "." + module_type + ".weight"
+        bias_name = layer_name + "." + module_type + ".bias"
         if not in_right_block and matches(net_type, module_type):
             in_right_block = True
         if in_right_block:
             if not matches(net_type, module_type) or i == len(layer_names) - 1:
                 break
             if net_type != "cnn" or num_in_block != 0:
-                mask_tens = mask_array[mask_ind]
+                mask_weight_field_name = net_type_to_weights_name(net_type)
+                mask_bias_field_name = net_type_to_bias_name(net_type)
+                mask_tens = mask_array[mask_ind][mask_weight_field_name]
                 mask_ind += 1
                 weight = state_dict_copy[weight_name]
                 shaped_mask_tens = mask_tens
                 for _ in range(mask_tens.dim(), weight.dim()):
                     shaped_mask_tens = torch.unsqueeze(shaped_mask_tens, -1)
+                # TODO: fix this issue, use booleans instead.
                 state_dict_copy[weight_name] = torch.mul(
                     shaped_mask_tens, weight)
+                if (mask_bias_field_name in mask_array[mask_ind]
+                        and mask_array[mask_ind][mask_bias_field_name]
+                        is not None):
+                    mask_bias = mask_array[mask_ind][mask_bias_field_name]
+                    bias = state_dict_copy[bias_name]
+                    state_dict_copy[bias_name] = torch.mul(mask_bias, bias)
                 num_in_block += 1
     return state_dict_copy
 
@@ -237,7 +272,8 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
 
     # get the masks
     mask_arrays = masks_from_clusters(num_clusters, cluster_labels,
-                                      isolation_indicator, layer_widths)
+                                      isolation_indicator, layer_widths,
+                                      net_type)
 
     # get masked accuracy stats
     net_dict = mlp_dict if net_type == 'mlp' else cnn_dict
@@ -288,8 +324,23 @@ def run_ablation_accuracy(training_dir, pre_mask_path, shuffle_cluster_dir,
     save_path_prefix = training_config['save_path_prefix']
     save_path = save_path_prefix + ('.pth' if is_pruned else '_unpruned.pth')
     state_dict = torch.load(save_path)
+    if pre_mask_path is not None:
+        pre_mask_dict = torch.load(pre_mask_path)
+        pre_mask_array = get_weight_tensors_from_state_dict(
+            pre_mask_dict, include_biases=True)
+        state_dict = apply_mask_to_net(pre_mask_array, state_dict, net_type)
     cluster_stats = get_ablation_accuracies(cluster_labels,
                                             isolation_indicator, state_dict,
                                             net_type, net_name, dataset,
                                             batch_size)
     return cluster_stats
+
+
+# function that I actually want: take state dict, load up mask, and apply mask
+# to state dict
+# so, this actually works just fine using apply_mask_to_net if I get
+# load_model_weights_pytorch working
+# but that's easy to write.
+# except: how do I deal with masks that also mask out biases.
+# problem: my load_model_weights_pytorch loads layer_dicts, so we'll have to do
+# some rewriting
