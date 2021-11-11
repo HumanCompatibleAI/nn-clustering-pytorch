@@ -173,6 +173,7 @@ def load_masked_weights_numpy(model_path,
     """
     Load model weights as well as masks for tensors in your model, and return
     numpy ndarrays containing weights with masks applied.
+    Here, 'apply' means that zeros are placed where the mask value is False
     model_path: string
     mask_path: string to state_dict of Nones and boolean tensors.
     pytorch_device: pytorch device
