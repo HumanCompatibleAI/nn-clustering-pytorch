@@ -196,8 +196,12 @@ def load_masked_weights_numpy(model_path,
         for key in model_dict:
             my_tens = model_dict[key]
             corresp_mask = mask_dict[key]
+            shaped_mask = corresp_mask.astype(int)
+            for _ in range(shaped_mask.ndim, my_tens.ndim):
+                shaped_mask = np.expand_dims(shaped_mask, -1)
             if corresp_mask is not None and key != 'layer':
-                np.place(my_tens, np.logical_not(corresp_mask), [0])
+                my_tens = np.multiply(my_tens, shaped_mask)
+                # np.place(my_tens, np.logical_not(corresp_mask), [0])
             if key != 'layer':
                 new_dict[key] = my_tens
         new_layer_array.append(new_dict)
