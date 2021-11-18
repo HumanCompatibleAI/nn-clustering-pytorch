@@ -16,7 +16,6 @@ from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 # Warning: don't apply to network while pruning is happening.
 
 # TODOS:
-# - deal with Csordas true/false masks
 # - refactor compare_masks_clusters to share functions with this file
 #   (probably by adding cluster_utils file)
 
@@ -131,7 +130,7 @@ def layer_mask_from_labels_numpy(in_width, out_width, in_labels, out_labels,
         between two neurons in the selected cluster, and Trues in other
         locations.
     """
-    my_mat = np.fill((out_width, in_width), True)
+    my_mat = np.full((out_width, in_width), True)
     in_labels_np = np.array(in_labels)
     out_labels_np = np.array(out_labels)
     my_mat[np.ix_(out_labels_np == cluster, in_labels_np == cluster)] = False
@@ -225,15 +224,21 @@ def apply_mask_to_net(mask_array, state_dict, net_type):
                 shaped_mask_tens = mask_tens
                 for _ in range(mask_tens.dim(), weight.dim()):
                     shaped_mask_tens = torch.unsqueeze(shaped_mask_tens, -1)
-                # TODO: fix this issue, use booleans instead.
-                state_dict_copy[weight_name] = torch.mul(
-                    shaped_mask_tens, weight)
+                shaped_mask_numpy = (
+                    shaped_mask_tens.cpu().detach().numpy().astype(int))
+                weight_numpy = weight.cpu().detach().numpy()
+                state_dict_copy[weight_name] = torch.from_numpy(
+                    np.multiply(weight_numpy, shaped_mask_numpy))
                 if (mask_bias_field_name in mask_array[mask_ind]
                         and mask_array[mask_ind][mask_bias_field_name]
                         is not None):
                     mask_bias = mask_array[mask_ind][mask_bias_field_name]
+                    mask_bias_numpy = (
+                        mask_bias.cpu().detach().numpy().astype(int))
                     bias = state_dict_copy[bias_name]
-                    state_dict_copy[bias_name] = torch.mul(mask_bias, bias)
+                    bias_numpy = bias.cpu().detach().numpy()
+                    state_dict_copy[bias_name] = torch.from_numpy(
+                        np.multiply(bias_numpy, mask_bias_numpy))
                 num_in_block += 1
     return state_dict_copy
 
@@ -334,13 +339,3 @@ def run_ablation_accuracy(training_dir, pre_mask_path, shuffle_cluster_dir,
                                             net_type, net_name, dataset,
                                             batch_size)
     return cluster_stats
-
-
-# function that I actually want: take state dict, load up mask, and apply mask
-# to state dict
-# so, this actually works just fine using apply_mask_to_net if I get
-# load_model_weights_pytorch working
-# but that's easy to write.
-# except: how do I deal with masks that also mask out biases.
-# problem: my load_model_weights_pytorch loads layer_dicts, so we'll have to do
-# some rewriting
