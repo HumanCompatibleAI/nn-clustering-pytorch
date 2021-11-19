@@ -88,10 +88,11 @@ def pad_labels(cluster_labels, isolation_indicator):
         otherwise, iterating from the first layer of the network to the last.
     Returns: an array of cluster labels.
     """
+    copy_labels = copy.copy(cluster_labels)
     for i, val in enumerate(isolation_indicator):
         if val == 1:
-            cluster_labels.insert(i, -1)
-    return cluster_labels
+            copy_labels.insert(i, -1)
+    return copy_labels
 
 
 def split_labels(cluster_labels, layer_widths):
@@ -289,6 +290,17 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
     cluster_stats = {}
     for i in range(num_clusters):
         mask_array = mask_arrays[i]
+        for j in range(i + 1, num_clusters):
+            mask_j = mask_arrays[j]
+            for k in range(len(mask_array)):
+                weights_name = net_type_to_weights_name(net_type)
+                mask_i_k = mask_array[k][weights_name].detach().cpu().numpy()
+                mask_j_k = mask_j[k][weights_name].detach().cpu().numpy()
+                # assert that mask_array and mask_j don't mask out the same
+                # things
+                # i.e. not both false
+                assert np.all(np.logical_or(
+                    mask_i_k, mask_j_k)), f"{mask_i_k}, {mask_j_k}"
         new_state_dict = apply_mask_to_net(mask_array, state_dict, net_type)
         network = net_class()
         network.load_state_dict(new_state_dict)
