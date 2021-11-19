@@ -152,8 +152,8 @@ def masks_from_clusters(num_clusters, cluster_labels, isolation_indicator,
         applied to.
     net_type: string, indicating whether the network is an mlp or a cnn
     Returns: array of arrays of pytorch tensors. ith array is for the ith
-        cluster. jth sub-array is for the jth weights layer. entry 0 for
-        weights going between neurons in the selected cluster, 1 otherwise.
+        cluster. jth sub-array is for the jth weights layer. entry False for
+        weights going between neurons in the selected cluster, True otherwise.
     """
     clust_masks = []
     for i in range(num_clusters):
