@@ -35,6 +35,14 @@ def basic_config():
 
 def get_weights_in_clusters(label_array, weights_layer_array, labels,
                             all_mask_array):
+    """
+    Returns boolean arrays with True for weights that go between two neurons
+    within a given cluster, False for weights that aren't between two neurons
+    in the given cluster. Well, tuples of cluster label and that.
+
+    NB: this is the opposite convention from ablation_accuracy.py because here
+    we want to retain the clusters, not ablate them.
+    """
     weights = [my_dict['fc_weights'] for my_dict in weights_layer_array]
     layer_widths = weights_to_layer_widths(weights)
     # take in a fattened-out label array
@@ -136,6 +144,36 @@ def get_intersection_props_neurons(neuron_indicator, label_array, cluster):
     return cluster, num_in_cluster, iou, iomask, ioclust
 
 
+def get_weighted_ioc(cluster_mask_tup, task_mask_array, weights_array):
+    """
+    For a given cluster, compute its weighted intersection over cluster with
+    a given mask.
+    cluster_mask_tup: tuple of cluster label, array of boolean mask matrices
+        for a cluster (True for weights within the cluster).
+    task_mask_array: array of boolean mask matrices for a task (True for
+        weights used for the task).
+    weights_array: array of layer dicts, containing (among other things) numpy
+        weight arrays
+    """
+    cluster_id, cluster_mask_array = cluster_mask_tup
+    assert len(cluster_mask_array) == len(task_mask_array)
+    assert len(task_mask_array) == len(weights_array)
+    num_in_clust = 0
+    weight_of_clust = 0
+    intersection_weight = 0
+    for mask_tup in zip(cluster_mask_array, task_mask_array, weights_array):
+        cluster_mask, task_mask_dict, weight_dict = mask_tup
+        task_mask = task_mask_dict['fc_weights']
+        weight_mat = weight_dict['fc_weights']
+        num_in_clust += len(cluster_mask[cluster_mask])
+        weight_of_clust += np.sum(np.abs(weight_mat[cluster_mask]))
+        intersection_mask = np.logical_and(cluster_mask, task_mask)
+        intersection_weight += np.sum(np.abs(weight_mat[intersection_mask]))
+    weighted_ioc = (intersection_weight /
+                    weight_of_clust if weight_of_clust != 0 else 0)
+    return cluster_id, num_in_clust, weight_of_clust, weighted_ioc
+
+
 def get_intersection_props_masks(cluster_mask_tup, mask_array):
     cluster_id, cluster_mask_array = cluster_mask_tup
     assert len(cluster_mask_array) == len(mask_array)
@@ -178,6 +216,11 @@ def get_mask_proportions(mask_array, all_mask_array):
 
 
 def get_labels_from_run_json(run_json_path):
+    """
+    Takes a path to a run.json file output by sacred.
+    Returns an array of cluster labels for each neuron, with entries of -1 for
+    isolated neurons that were deleted before clustering.
+    """
     with open(run_json_path) as f:
         run_dict = json.load(f)
     label_array = run_dict['result']['labels']
@@ -216,8 +259,14 @@ def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
     clust_masks = get_weights_in_clusters(label_array, weights_layer_array,
                                           labels, all_mask_array)
     weight_ious_iomasks_ioclusts = [
-        get_intersection_props_masks(clust_mask, mask_array)
-        for clust_mask in clust_masks
+        get_intersection_props_masks(clust_tup, mask_array)
+        for clust_tup in clust_masks
     ]
-    return neuron_ious_iomasks_ioclusts, weight_ious_iomasks_ioclusts
+
+    weighted_iocs = [
+        get_weighted_ioc(clust_tup, mask_array, weights_layer_array)
+        for clust_tup in clust_masks
+    ]
+    return (neuron_ious_iomasks_ioclusts, weight_ious_iomasks_ioclusts,
+            weighted_iocs)
     # return weight_ious_iomasks_ioclusts
