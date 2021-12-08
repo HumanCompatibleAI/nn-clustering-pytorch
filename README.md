@@ -34,4 +34,7 @@ For Sequential modules:
 
 In both cases, there can only be one batch norm module between two linear transformations. For examples of networks that meet these specifications, see `src/networks.py`.
 
-TODO: fix naming of `blah_pytorch` functions that don't return pytorch objects
+TODOs:
+  - Refactor code so that ablation_accuracy and compare_masks_clusters share functions
+  - Docstrings in compare_masks_clusters
+  - Move dataset stuff to its own separate file
