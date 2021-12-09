@@ -9,7 +9,7 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from graph_utils import np_layer_array_to_graph_weights_array
-from networks import cnn_dict, mlp_dict
+from networks import CNN_DICT, MLP_DICT
 from train_model import csordas_loss, eval_net, load_datasets
 from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
 
@@ -282,7 +282,7 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
                                       net_type)
 
     # get masked accuracy stats
-    net_dict = mlp_dict if net_type == 'mlp' else cnn_dict
+    net_dict = MLP_DICT if net_type == 'mlp' else CNN_DICT
     net_class = net_dict[net_name]
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))

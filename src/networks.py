@@ -459,14 +459,14 @@ def cifar10_vgg19_bn():
     return CIFAR10_VGG(make_layers(cfg['E'], batch_norm=True))
 
 
-mlp_dict = {
+MLP_DICT = {
     'mnist': MnistMLP,
     'tiny': TinyMLP,
     'add_mul': AddMulMLP,
     'simple': SimpleMathMLP
 }
 
-cnn_dict = {
+CNN_DICT = {
     'cifar10_6_bn': CIFAR10_BN_CNN_6,
     'cifar10_6': CIFAR10_CNN_6,
     'mnist': MnistCNN,

@@ -12,7 +12,7 @@ from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
 from datasets import SIMPLE_FUNCTIONS, load_datasets
-from networks import cnn_dict, mlp_dict
+from networks import CNN_DICT, MLP_DICT
 from utils import (
     calc_arg_deps,
     calc_neuron_sparsity,
@@ -609,10 +609,10 @@ def run_training(dataset, batch_size, net_type, net_choice, optim_func,
         criterion = nn.CrossEntropyLoss()
 
     if net_choice == "simple":
-        network = mlp_dict[net_choice](**simple_math_net_kwargs)
+        network = MLP_DICT[net_choice](**simple_math_net_kwargs)
     else:
-        network = (mlp_dict[net_choice]()
-                   if net_type == 'mlp' else cnn_dict[net_choice]())
+        network = (MLP_DICT[net_choice]()
+                   if net_type == 'mlp' else CNN_DICT[net_choice]())
 
     if optim_func == 'adam':
         optimizer_ = optim.Adam
