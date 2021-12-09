@@ -10,7 +10,36 @@ import torch.nn.functional as F
 # dicts of networks at end of file
 
 
-class MnistMLP(nn.Module):
+class CachingNet(nn.Module):
+    """
+    Super-class for networks that will cache their activations. For use with
+    activation-aware clustering.
+    Upon initializing nets, be sure to add a layer_dict and run
+    self.cache_activations() after initializing everything else.
+    Only works for MLPs at the moment.
+    """
+    def __init__(self):
+        super(CachingNet, self).__init__()
+        self.layer_dict = {}
+        # TODO: figure out how layer_dict works for nets constructed w/
+        # sequential modules.
+
+    def cache_activations(self):
+        """
+        Creates forward hooks to cache the pre-ReLU activations for each layer.
+        """
+        self.activations = {}
+
+        def hook(model, inp, out, name):
+            self.activations[name] = out.detach()
+
+        for name, layer in self.layer_dict.items():
+            layer.fc.register_forward_hook(functools.partial(hook, name=name))
+
+        return self.activations
+
+
+class MnistMLP(CachingNet):
     """
     A simple MLP, likely not very competitive
     """
@@ -26,6 +55,13 @@ class MnistMLP(nn.Module):
         self.layer3 = nn.ModuleDict(
             {"fc": nn.Linear(self.hidden2, self.hidden3)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, 10)})
+        self.layer_dict = {
+            'layer1': self.layer1,
+            'layer2': self.layer2,
+            'layer3': self.layer3,
+            'layer4': self.layer4
+        }
+        self.cache_activations()
 
     def forward(self, x):
         x = x.view(-1, 28 * 28)
@@ -36,7 +72,7 @@ class MnistMLP(nn.Module):
         return x
 
 
-class TinyMLP(nn.Module):
+class TinyMLP(CachingNet):
     """
     A tiny MLP used for debugging. Use with a fake tiny dataset.
     """
@@ -44,6 +80,8 @@ class TinyMLP(nn.Module):
         super(TinyMLP, self).__init__()
         self.layer1 = nn.ModuleDict({"fc": nn.Linear(3, 3)})
         self.layer2 = nn.ModuleDict({"fc": nn.Linear(3, 2)})
+        self.layer_dict = {'layer1': self.layer1, 'layer2': self.layer2}
+        self.cache_activations()
 
     def forward(self, x):
         x = F.relu(self.layer1["fc"](x))
@@ -51,7 +89,7 @@ class TinyMLP(nn.Module):
         return x
 
 
-class AddMulMLP(nn.Module):
+class AddMulMLP(CachingNet):
     """
     An MLP used for the addition/multiplication task from Csordas (2021).
     """
@@ -62,6 +100,14 @@ class AddMulMLP(nn.Module):
         self.layer3 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
         self.layer5 = nn.ModuleDict({"fc": nn.Linear(2000, 20)})
+        self.layer_dict = {
+            'layer1': self.layer1,
+            'layer2': self.layer2,
+            'layer3': self.layer3,
+            'layer4': self.layer4,
+            'layer5': self.layer5
+        }
+        self.cache_activations()
 
     def forward(self, x):
         x = F.relu(self.layer1["fc"](x))
@@ -72,7 +118,7 @@ class AddMulMLP(nn.Module):
         return x
 
 
-class SimpleMathMLP(nn.Module):
+class SimpleMathMLP(CachingNet):
     """
     An MLP used to model simple math functions, eg (x,y) -> (sin(x), cos(y))
     4 layer MLP, with 3 hidden layers of the same size
@@ -101,6 +147,15 @@ class SimpleMathMLP(nn.Module):
         self.layer3 = nn.ModuleDict(
             {"fc": nn.Linear(self.hidden2, self.hidden3)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, out)})
+        self.cache_post_activations()
+        # to do away with cache_post_activations(), you'd need to edit
+        # calc_neuron_sparsity in src/utils.py to deal with layer names.
+        self.layer_dict = {
+            'layer1': self.layer1,
+            'layer2': self.layer2,
+            'layer3': self.layer3,
+            'layer4': self.layer4
+        }
         self.cache_activations()
 
     def forward(self, x):
@@ -113,12 +168,12 @@ class SimpleMathMLP(nn.Module):
         x = self.layer4["fc"](x)
         return x
 
-    def cache_activations(self):
+    def cache_post_activations(self):
         """
         Creates forward hooks to cache the intermediate activations for each
         layer.
         """
-        self.activation = {}
+        self.post_activation = {}
 
         def hook(model, inpu, output, name):
             self.activation[name] = F.relu(output.detach())
@@ -127,7 +182,7 @@ class SimpleMathMLP(nn.Module):
         self.layer2.fc.register_forward_hook(functools.partial(hook, name=2))
         self.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
         self.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
-        return self.activation
+        return self.post_activation
 
 
 class MnistCNN(nn.Module):

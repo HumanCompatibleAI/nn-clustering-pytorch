@@ -372,7 +372,7 @@ def calc_neuron_sparsity(net, device, n=10000, lim=5, do_print=True):
     _ = net(x)
     output = []
     for i in range(1, 4):
-        activated_neurons = (net.activation[i] != 0).sum(axis=0)
+        activated_neurons = (net.post_activation[i] != 0).sum(axis=0)
         num_neurons = (activated_neurons > 0).sum().detach().cpu().numpy()
         total_neurons = len(activated_neurons)
         if do_print:
