@@ -176,7 +176,7 @@ class SimpleMathMLP(CachingNet):
         self.post_activation = {}
 
         def hook(model, inpu, output, name):
-            self.activation[name] = F.relu(output.detach())
+            self.post_activation[name] = F.relu(output.detach())
 
         self.layer1.fc.register_forward_hook(functools.partial(hook, name=1))
         self.layer2.fc.register_forward_hook(functools.partial(hook, name=2))

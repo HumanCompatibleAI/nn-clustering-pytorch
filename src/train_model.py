@@ -12,7 +12,7 @@ from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
 from datasets import SIMPLE_FUNCTIONS, load_datasets
-from networks import CNN_DICT, MLP_DICT
+from networks import CNN_DICT, MLP_DICT, CachingNet
 from utils import (
     calc_arg_deps,
     calc_neuron_sparsity,
@@ -497,6 +497,12 @@ def train_and_save(network, optimizer, criterion, train_loader,
     torch.save(network.state_dict(), save_path)
     train_exp.add_artifact(save_path)
     print("Network saved at " + save_path)
+
+    if isinstance(network, CachingNet):
+        activation_save_path = save_path_prefix + '_activations.pth'
+        torch.save(network.activations, activation_save_path)
+        print("Activations saved at " + activation_save_path)
+
     return test_results_dict, loss_list
 
 
