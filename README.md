@@ -37,4 +37,3 @@ In both cases, there can only be one batch norm module between two linear transf
 TODOs:
   - Refactor code so that ablation_accuracy and compare_masks_clusters share functions
   - Docstrings in compare_masks_clusters
-  - Move dataset stuff to its own separate file
