@@ -6,8 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # TODO: have params for size of network?
-
-# dicts of networks at end of file
+# TODO: figure out how to get caching of activations for CNNs.
 
 
 class CachingNet(nn.Module):
@@ -17,6 +16,8 @@ class CachingNet(nn.Module):
     Upon initializing nets, be sure to add a layer_dict and run
     self.cache_activations() after initializing everything else.
     Only works for MLPs at the moment.
+    Because it saves the results of fc modules, it doesn't take batchnorm into
+    acccount.
     """
     def __init__(self):
         super(CachingNet, self).__init__()
@@ -147,9 +148,6 @@ class SimpleMathMLP(CachingNet):
         self.layer3 = nn.ModuleDict(
             {"fc": nn.Linear(self.hidden2, self.hidden3)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, out)})
-        self.cache_post_activations()
-        # to do away with cache_post_activations(), you'd need to edit
-        # calc_neuron_sparsity in src/utils.py to deal with layer names.
         self.layer_dict = {
             'layer1': self.layer1,
             'layer2': self.layer2,
@@ -167,22 +165,6 @@ class SimpleMathMLP(CachingNet):
         x = act(self.layer3["fc"](x))
         x = self.layer4["fc"](x)
         return x
-
-    def cache_post_activations(self):
-        """
-        Creates forward hooks to cache the intermediate activations for each
-        layer.
-        """
-        self.post_activation = {}
-
-        def hook(model, inpu, output, name):
-            self.post_activation[name] = F.relu(output.detach())
-
-        self.layer1.fc.register_forward_hook(functools.partial(hook, name=1))
-        self.layer2.fc.register_forward_hook(functools.partial(hook, name=2))
-        self.layer3.fc.register_forward_hook(functools.partial(hook, name=3))
-        self.layer4.fc.register_forward_hook(functools.partial(hook, name=4))
-        return self.post_activation
 
 
 class MnistCNN(nn.Module):
