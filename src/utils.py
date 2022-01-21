@@ -144,6 +144,15 @@ def check_layer_names(layer_array):
             assert layer_names[i] != layer_names[j], layer_name_problem
 
 
+def load_activations_numpy(activations_path, pytorch_device):
+    acts_dict = torch.load(activations_path, map_location=pytorch_device)
+
+    for key, val in acts_dict.items():
+        acts_dict[key] = val.detach().cpu().numpy()
+
+    return acts_dict
+
+
 def load_model_weights_numpy(model_path, pytorch_device, include_biases=False):
     """
     Take a pytorch saved model state dict, and return an array of the weight
