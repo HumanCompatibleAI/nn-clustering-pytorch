@@ -222,3 +222,36 @@ def normalize_weights_array(weights_array, eps=1e-5):
         new_array[idx] = np.divide(this_layer, scales_rows)
         new_array[idx + 1] = np.multiply(next_layer, scales_mul)
     return new_array
+
+
+def add_activation_gradients(weights_array, activation_dict):
+    """
+    Multiplies weights by the average derivative of the activation function of
+    the neuron they point to. This makes the graph weights reflect partial
+    derivatives of activations wrt activations, which is probably good.
+    Only works for ReLU MLPs without batch norm.
+    WARNING: behaviour relies on dicts being nicely ordered, which is scary.
+    weights_array (array): list of numpy weight tensors of an MLP, in order.
+    activation_dict (dict): dict of numpy activations of each layer, in same
+        order.
+    returns: list of new weight tensors for a graph for the MLP.
+    """
+    props_on = []
+    for act_tens in activation_dict.values():
+        props_on.append(np.mean(0.5 * (np.sign(act_tens) + 1), axis=0))
+    num_layers = len(weights_array)
+    assert len(props_on) == num_layers
+    new_weights = []
+    for (i, (wt, prop_vec)) in enumerate(zip(weights_array, props_on)):
+        if i != num_layers - 1:
+            # AFAICT, this is how you have to multiply along dim 0 in numpy
+            # weights arrays have shape (out_features, in_features), and
+            # props_on has shape (out_features,).
+            wt_trans = np.transpose(wt, (1, 0))
+            new_wt_trans = np.multiply(wt_trans, prop_vec)
+            new_weight = np.transpose(new_wt_trans, (1, 0))
+            new_weights.append(np.abs(new_weight))
+        else:
+            # last layer has no relu
+            new_weights.append(np.abs(wt))
+    return new_weights
