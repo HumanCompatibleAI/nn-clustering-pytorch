@@ -166,6 +166,10 @@ def load_model_weights_numpy(model_path, pytorch_device, include_biases=False):
              tensors
     """
     state_dict = torch.load(model_path, map_location=pytorch_device)
+    return model_weights_from_state_dict_numpy(state_dict, include_biases)
+
+
+def model_weights_from_state_dict_numpy(state_dict, include_biases=False):
     layer_array = get_weight_tensors_from_state_dict(state_dict,
                                                      include_biases)
     for layer_dict in layer_array:
@@ -215,6 +219,20 @@ def load_masked_weights_numpy(model_path,
                 new_dict[key] = my_tens
         new_layer_array.append(new_dict)
     return new_layer_array
+
+
+def masked_weights_from_state_dicts(model_state_dict, mask_state_dict):
+    new_state_dict = {}
+    for key in model_state_dict:
+        model_tens = model_state_dict[key]
+        mask_tens = mask_state_dict[key]
+        shaped_mask = mask_tens.int()
+        for _ in range(shaped_mask.ndim, model_tens.ndim):
+            shaped_mask = torch.unsqueeze(shaped_mask, -1)
+        new_tens = (torch.mul(model_tens, shaped_mask)
+                    if mask_tens is not None else model_tens)
+        new_state_dict[key] = new_tens
+    return new_state_dict
 
 
 def load_masked_out_weights_numpy(model_path,

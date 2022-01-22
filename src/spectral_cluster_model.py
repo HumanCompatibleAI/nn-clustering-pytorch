@@ -126,9 +126,9 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
     cluster the resulting graph, and get the n-cut and the clustering.
     layer_array: array of dicts representing layers, containing layer names
                  and numpy param tensors
-    num_clusters: integer number of desired clusters
     acts_dict: dictionary of numpy tensors holding activation data for each
-               neuron.
+               neuron, or None if that isn't being used.
+    num_clusters: integer number of desired clusters
     eigen_solver: string specifying which eigenvalue solver to use for spectral
                   clustering
     normalize_weights: bool specifying whether the weights should be
