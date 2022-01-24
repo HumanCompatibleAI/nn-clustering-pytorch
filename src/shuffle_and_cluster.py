@@ -7,7 +7,6 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
 from datasets import load_datasets
-from graph_utils import add_activation_gradients
 from networks import CNN_DICT, MLP_DICT
 from spectral_cluster_model import layer_array_to_clustering_and_quality
 from utils import (
@@ -39,6 +38,7 @@ def basic_config():
     dataset = None
     net_str = None
     activations_path = None
+    generate_acts = False
     _ = locals()
     del _
 
@@ -55,6 +55,7 @@ def activations_config():
     dataset = 'kmnist'
     net_str = 'mnist'
     activations_path = "./models/mlp_kmnist_activations.pth"
+    generate_acts = True
     _ = locals()
     del _
 
@@ -144,28 +145,44 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
             shuffled_state_dict)
         if net_str is not None:
             assert dataset is not None
-            network_dict = MLP_DICT if net_type == 'mlp' else CNN_DICT
-            net = network_dict[net_str]()
-            net.load_state_dict(shuffled_state_dict)
-            # now, load dataset
-            train_set, _, _ = load_datasets(dataset, 128, {})
-            new_batch = next(iter(train_set))
-            _ = net(new_batch)
-            acts_dict = net.activations
-            shuffled_layer_array = add_activation_gradients(
-                shuffled_layer_array, acts_dict)
+            acts_dict = get_activations(net_type, net_str, shuffled_state_dict,
+                                        dataset)
         big_tup = layer_array_to_clustering_and_quality(
-            shuffled_layer_array, net_type, num_clusters, eigen_solver,
-            normalize_weights, epsilon)
+            shuffled_layer_array, net_type, acts_dict, num_clusters,
+            eigen_solver, normalize_weights, epsilon)
         n_cut = big_tup[0][0]
         n_cuts.append(n_cut)
     return n_cuts
 
 
+def get_activations(net_type, net_str, state_dict, dataset):
+    """
+    Load a dictionary of neuron activations on a specified training dataset.
+    net_type (str): Whether the network is an MLP or a CNN
+    net_str (str): Specification of the network architecture, to index into
+        MLP_DICT or CNN_DICT.
+    state_dict (dict): Dictionary of parameter tensors to load into the network
+        architecture.
+    dataset (str): Specification of which dataset to use.
+    returns: A dictionary mapping layers to activations. 0 index varies over
+        batch size, 1 index varies over neurons in a layer.
+    """
+    network_dict = MLP_DICT if net_type == 'mlp' else CNN_DICT
+    net = network_dict[net_str]()
+    net.load_state_dict(state_dict)
+    train_set, _, _ = load_datasets(dataset, 128, {})
+    new_batch = next(iter(train_set))
+    _ = net(new_batch[0])
+    acts_dict = net.activations
+    for key, val in acts_dict.items():
+        acts_dict[key] = val.detach().cpu().numpy()
+    return acts_dict
+
+
 @shuffle_and_clust.automain
-def run_experiment(weights_path, mask_path, activations_path, net_type,
-                   num_clusters, dataset, net_str, eigen_solver, epsilon,
-                   num_samples, shuffle_method, normalize_weights):
+def run_experiment(weights_path, mask_path, activations_path, generate_acts,
+                   net_type, num_clusters, dataset, net_str, eigen_solver,
+                   epsilon, num_samples, shuffle_method, normalize_weights):
     """
     load saved weights, cluster them, get their n-cut, then shuffle them and
     get the n-cut of the shuffles. Before each clustering, delete any isolated
@@ -178,6 +195,8 @@ def run_experiment(weights_path, mask_path, activations_path, net_type,
                used
     activations_path: path to where activations are saved, or None if no
                       activations are used.
+    generate_acts: bool indicating whether the network will be run to sample
+                   activations to incorporate into initial clustering.
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     dataset: string indicating what dataset should be used to get activations,
@@ -207,8 +226,12 @@ def run_experiment(weights_path, mask_path, activations_path, net_type,
     if mask_path is not None:
         mask_dict = torch.load(mask_path, map_location=device)
         state_dict = masked_weights_from_state_dicts(state_dict, mask_dict)
-    acts_dict = (load_activations_numpy(activations_path, device)
-                 if activations_path is not None else None)
+    if generate_acts:
+        acts_dict = get_activations(net_type, net_str, state_dict, dataset)
+    elif activations_path is not None:
+        acts_dict = load_activations_numpy(activations_path, device)
+    else:
+        acts_dict = None
     layer_array = model_weights_from_state_dict_numpy(state_dict)
     big_tup = layer_array_to_clustering_and_quality(layer_array, net_type,
                                                     acts_dict, num_clusters,
