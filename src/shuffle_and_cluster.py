@@ -147,6 +147,8 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
             assert dataset is not None
             acts_dict = get_activations(net_type, net_str, shuffled_state_dict,
                                         dataset)
+        else:
+            acts_dict = None
         big_tup = layer_array_to_clustering_and_quality(
             shuffled_layer_array, net_type, acts_dict, num_clusters,
             eigen_solver, normalize_weights, epsilon)

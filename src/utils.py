@@ -222,11 +222,13 @@ def masked_weights_from_state_dicts(model_state_dict, mask_state_dict):
     for key in model_state_dict:
         model_tens = model_state_dict[key]
         mask_tens = mask_state_dict[key]
-        shaped_mask = mask_tens.int()
-        for _ in range(shaped_mask.ndim, model_tens.ndim):
-            shaped_mask = torch.unsqueeze(shaped_mask, -1)
-        new_tens = (torch.mul(model_tens, shaped_mask)
-                    if mask_tens is not None else model_tens)
+        if mask_tens is not None:
+            shaped_mask = mask_tens.int()
+            for _ in range(shaped_mask.ndim, model_tens.ndim):
+                shaped_mask = torch.unsqueeze(shaped_mask, -1)
+            new_tens = torch.mul(model_tens, shaped_mask)
+        else:
+            new_tens = model_tens
         new_state_dict[key] = new_tens
     return new_state_dict
 
