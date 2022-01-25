@@ -7,6 +7,7 @@ from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 from sklearn.cluster import SpectralClustering
 
+from datasets import load_datasets
 from graph_utils import (
     add_activation_gradients,
     delete_isolated_ccs,
@@ -14,10 +15,12 @@ from graph_utils import (
     np_layer_array_to_graph_weights_array,
     weights_to_graph,
 )
+from networks import CNN_DICT, MLP_DICT
 from utils import (
     load_activations_numpy,
-    load_masked_weights_numpy,
-    load_model_weights_numpy,
+    masked_weights_from_state_dicts,
+    model_weights_from_state_dict_numpy,
+    np_layer_array_to_bn_param_dicts,
 )
 
 clust_exp = Experiment('cluster_model')
@@ -29,7 +32,10 @@ clust_exp.observers.append(FileStorageObserver('clustering_runs'))
 def basic_config():
     num_clusters = 4
     weights_path = "./models/mlp_kmnist.pth"
-    activation_path = None
+    use_activations = False
+    acts_load_path = None
+    dataset = None
+    net_str = None
     mask_path = None
     net_type = 'mlp'
     normalize_weights = True
@@ -48,7 +54,9 @@ def cnn_config():
 
 @clust_exp.named_config
 def act_grad_config():
-    activation_path = "./models/mlp_kmnist_activations.pth"
+    use_activations = True
+    dataset = 'kmnist'
+    net_str = 'mnist'
     _ = locals()
     del _
 
@@ -138,10 +146,12 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
     """
     weights_array = np_layer_array_to_graph_weights_array(
         layer_array, net_type)
+    bn_params = np_layer_array_to_bn_param_dicts(layer_array, net_type)
     if normalize_weights:
         weights_array = normalize_weights_array(weights_array)
     if acts_dict is not None:
-        weights_array = add_activation_gradients(weights_array, acts_dict)
+        weights_array = add_activation_gradients(weights_array, acts_dict,
+                                                 net_type, bn_params)
     adj_mat = weights_to_graph(weights_array)
     _, adj_mat_, _, _, isolation_indicator = delete_isolated_ccs(
         weights_array, adj_mat)
@@ -150,32 +160,75 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
     return result, isolation_indicator
 
 
+def get_activations(net_type, net_str, state_dict, dataset):
+    """
+    Load a dictionary of neuron activations on a specified training dataset.
+    Only works for CachingNets as defined in src/networks.py.
+    net_type (str): Whether the network is an MLP or a CNN
+    net_str (str): Specification of the network architecture, to index into
+        MLP_DICT or CNN_DICT.
+    state_dict (dict): Dictionary of parameter tensors to load into the network
+        architecture.
+    dataset (str): Specification of which dataset to use.
+    returns: A dictionary mapping layers to activations. 0 index varies over
+        batch size, 1 index varies over neurons in a layer.
+    """
+    network_dict = MLP_DICT if net_type == 'mlp' else CNN_DICT
+    net = network_dict[net_str]()
+    net.load_state_dict(state_dict)
+    _, test_set_dict, _ = load_datasets(dataset, 128, {})
+    new_batch = next(iter(test_set_dict['all']))
+    net.eval()
+    with torch.no_grad():
+        _ = net(new_batch[0])
+        acts_dict = net.activations
+    for key, val in acts_dict.items():
+        acts_dict[key] = val.detach().cpu().numpy()
+    return acts_dict
+
+
 @clust_exp.automain
-def run_experiment(weights_path, mask_path, activation_path, net_type,
-                   num_clusters, eigen_solver, normalize_weights, epsilon):
+def run_experiment(weights_path, mask_path, use_activations, acts_load_path,
+                   net_type, num_clusters, eigen_solver, normalize_weights,
+                   dataset, net_str, epsilon):
     """
     load saved weights, delete any isolated connected components, cluster them,
     get their n-cut and the clustering
     weights_path: path to where weights are saved. String suffices.
     mask_path: path to where masks are saved, if any, or None.
-    activation_path: path to where neuron activations are saved, if any,
-                     or None.
+    use_activations: bool indicating whether to use activation-aware
+        clustering.
+    acts_load_path: string indicating where to load activations from, or None
+        if activations will not be loaded
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     eigen_solver: string specifying which eigenvalue solver to use for spectral
-                  clustering
+        clustering
     normalize_weights: bool specifying whether the weights should be
-                       'normalized' before clustering.
+        'normalized' before clustering.
+    dataset: string specifying the dataset, or None if activations will not
+        be used.
+    net_str: string specifying the network architecture, or None if activations
+        will not be used.
     epsilon: small positive number to stop us dividing by zero
     returns: tuple containing n-cut and array of cluster labels
     """
     device = (torch.device("cuda")
               if torch.cuda.is_available() else torch.device("cpu"))
-    layer_array = (load_model_weights_numpy(weights_path, device)
-                   if mask_path is None else load_masked_weights_numpy(
-                       weights_path, mask_path, device))
-    acts_dict = (load_activations_numpy(activation_path, device)
-                 if activation_path is not None else None)
+    state_dict = torch.load(weights_path, map_location=device)
+    if mask_path is not None:
+        mask_dict = torch.load(mask_path, map_location=device)
+        state_dict = masked_weights_from_state_dicts(state_dict, mask_dict)
+    layer_array = model_weights_from_state_dict_numpy(state_dict)
+    if use_activations:
+        assert net_str is not None
+        assert dataset is not None
+    if use_activations:
+        acts_dict = (get_activations(net_type, net_str, state_dict, dataset)
+                     if acts_load_path is None else load_activations_numpy(
+                         acts_load_path, device))
+    else:
+        acts_dict = None
     (n_cut_val, clustering_labels), isolation_indicator = \
         layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
                                               num_clusters, eigen_solver,

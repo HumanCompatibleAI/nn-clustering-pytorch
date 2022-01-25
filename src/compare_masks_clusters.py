@@ -269,4 +269,5 @@ def run_experiment(weights_path, all_mask_path, mask_path, other_mask_paths,
     ]
     return (neuron_ious_iomasks_ioclusts, weight_ious_iomasks_ioclusts,
             weighted_iocs)
+    # return weighted_iocs
     # return weight_ious_iomasks_ioclusts

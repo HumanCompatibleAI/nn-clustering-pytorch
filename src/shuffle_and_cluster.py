@@ -6,9 +6,10 @@ from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from sacred.utils import apply_backspaces_and_linefeeds
 
-from datasets import load_datasets
-from networks import CNN_DICT, MLP_DICT
-from spectral_cluster_model import layer_array_to_clustering_and_quality
+from spectral_cluster_model import (
+    get_activations,
+    layer_array_to_clustering_and_quality,
+)
 from utils import (
     compute_percentile,
     get_random_int_time,
@@ -37,8 +38,8 @@ def basic_config():
     eigen_solver = 'arpack'
     dataset = None
     net_str = None
-    activations_path = None
-    generate_acts = False
+    use_activations = False
+    acts_load_path = None
     _ = locals()
     del _
 
@@ -54,8 +55,7 @@ def cnn_config():
 def activations_config():
     dataset = 'kmnist'
     net_str = 'mnist'
-    activations_path = "./models/mlp_kmnist_activations.pth"
-    generate_acts = True
+    use_activations = True
     _ = locals()
     del _
 
@@ -155,32 +155,8 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
     return n_cuts
 
 
-def get_activations(net_type, net_str, state_dict, dataset):
-    """
-    Load a dictionary of neuron activations on a specified training dataset.
-    net_type (str): Whether the network is an MLP or a CNN
-    net_str (str): Specification of the network architecture, to index into
-        MLP_DICT or CNN_DICT.
-    state_dict (dict): Dictionary of parameter tensors to load into the network
-        architecture.
-    dataset (str): Specification of which dataset to use.
-    returns: A dictionary mapping layers to activations. 0 index varies over
-        batch size, 1 index varies over neurons in a layer.
-    """
-    network_dict = MLP_DICT if net_type == 'mlp' else CNN_DICT
-    net = network_dict[net_str]()
-    net.load_state_dict(state_dict)
-    train_set, _, _ = load_datasets(dataset, 128, {})
-    new_batch = next(iter(train_set))
-    _ = net(new_batch[0])
-    acts_dict = net.activations
-    for key, val in acts_dict.items():
-        acts_dict[key] = val.detach().cpu().numpy()
-    return acts_dict
-
-
 @shuffle_and_clust.automain
-def run_experiment(weights_path, mask_path, activations_path, generate_acts,
+def run_experiment(weights_path, mask_path, use_activations, acts_load_path,
                    net_type, num_clusters, dataset, net_str, eigen_solver,
                    epsilon, num_samples, shuffle_method, normalize_weights):
     """
@@ -192,32 +168,34 @@ def run_experiment(weights_path, mask_path, activations_path, generate_acts,
     in Neural Networks arXiv:2103.03386)
     weights_path: path to where weights are saved. String suffices.
     mask_path: path to where mask is saved (as a string), or None if no mask is
-               used
-    activations_path: path to where activations are saved, or None if no
-                      activations are used.
-    generate_acts: bool indicating whether the network will be run to sample
-                   activations to incorporate into initial clustering.
+        used
+    use_activations: bool indicating whether the network will be run to sample
+        activations to incorporate into initial clustering.
+    acts_load_path: string indicating where to load activations from, or None
+        if activations will not be loaded
     net_type: string indicating whether the model is an MLP or a CNN
     num_clusters: int, number of groups to cluster the net into
     dataset: string indicating what dataset should be used to get activations,
-             or None if activations aren't being used.
+        or None if activations aren't being used.
     net_str: string indicating which network architecture is being used (in
-             order to play with activations), or None if activations aren't
-             being used.
+        order to play with activations), or None if activations aren't being
+        used.
     eigen_solver: string specifying which eigenvalue solver to use for spectral
-                  clustering
+        clustering
     epsilon: small positive number to stop us dividing by zero
     num_samples: how many shuffles to compare against
     shuffle_method: string indicating how to shuffle the network
     normalize_weights: bool specifying whether the weights should be
-                       'normalized' before clustering.
-    returns: dict containing 'true n-cut', a float, 'num samples', an int,
-             'mean', a float representing the mean shuffled n-cut,
-             'stdev', a float representing the standard deviation of the
-             distribution of shuffled n-cuts,
-             'percentile', a float representing the empirical percentile of the
-             true n-cut among the shuffled n-cuts,
-             and 'z-score', a float representing the z-score of the true n-cut
+        'normalized' before clustering.
+    returns dict containing:
+        'true n-cut', a float,
+        'num samples', an int,
+        'mean', a float representing the mean shuffled n-cut,
+        'stdev', a float representing the standard deviation of the
+            distribution of shuffled n-cuts,
+        'percentile', a float representing the empirical percentile of the
+            true n-cut among the shuffled n-cuts,
+        'z-score', a float representing the z-score of the true n-cut
              in the distribution of the shuffled n-cuts.
     """
     device = (torch.device("cuda")
@@ -226,10 +204,10 @@ def run_experiment(weights_path, mask_path, activations_path, generate_acts,
     if mask_path is not None:
         mask_dict = torch.load(mask_path, map_location=device)
         state_dict = masked_weights_from_state_dicts(state_dict, mask_dict)
-    if generate_acts:
-        acts_dict = get_activations(net_type, net_str, state_dict, dataset)
-    elif activations_path is not None:
-        acts_dict = load_activations_numpy(activations_path, device)
+    if use_activations:
+        acts_dict = (get_activations(net_type, net_str, state_dict, dataset)
+                     if acts_load_path is None else load_activations_numpy(
+                         acts_load_path, device))
     else:
         acts_dict = None
     layer_array = model_weights_from_state_dict_numpy(state_dict)

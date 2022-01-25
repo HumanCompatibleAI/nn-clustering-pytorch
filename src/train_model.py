@@ -459,6 +459,7 @@ def train_and_save(network, optimizer, criterion, train_loader,
                     'loss': test_loss
                 }
             else:
+                # TODO: break this out into a function
                 # Simple dataset is a regression task, don't calculate accuracy
                 print("Test loss on " + test_set + " is", test_loss)
                 _run.log_scalar("test." + test_set + ".loss", test_loss)

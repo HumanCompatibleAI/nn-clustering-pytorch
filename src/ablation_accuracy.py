@@ -11,7 +11,11 @@ from sacred.utils import apply_backspaces_and_linefeeds
 from graph_utils import np_layer_array_to_graph_weights_array
 from networks import CNN_DICT, MLP_DICT
 from train_model import csordas_loss, eval_net, load_datasets
-from utils import get_weight_tensors_from_state_dict, weights_to_layer_widths
+from utils import (
+    get_weight_tensors_from_state_dict,
+    model_weights_from_state_dict_numpy,
+    weights_to_layer_widths,
+)
 
 # Warning: don't apply to network while pruning is happening.
 
@@ -267,11 +271,7 @@ def get_ablation_accuracies(cluster_labels, isolation_indicator, state_dict,
     """
     num_clusters = len(set(cluster_labels))
     # get the layer widths
-    weights_array = get_weight_tensors_from_state_dict(state_dict)
-    for layer_dict in weights_array:
-        for key, val in layer_dict.items():
-            if isinstance(val, torch.Tensor):
-                layer_dict[key] = val.detach().cpu().numpy()
+    weights_array = model_weights_from_state_dict_numpy(state_dict)
     graph_weights = np_layer_array_to_graph_weights_array(
         weights_array, net_type)
     layer_widths = weights_to_layer_widths(graph_weights)

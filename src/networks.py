@@ -35,7 +35,12 @@ class CachingNet(nn.Module):
             self.activations[name] = out.detach()
 
         for name, layer in self.layer_dict.items():
-            layer.fc.register_forward_hook(functools.partial(hook, name=name))
+            if hasattr(layer, 'fc'):
+                layer.fc.register_forward_hook(
+                    functools.partial(hook, name=name))
+            elif hasattr(layer, 'conv'):
+                layer.conv.register_forward_hook(
+                    functools.partial(hook, name=name))
 
         return self.activations
 
@@ -167,7 +172,7 @@ class SimpleMathMLP(CachingNet):
         return x
 
 
-class MnistCNN(nn.Module):
+class MnistCNN(CachingNet):
     """
     A simple CNN, taken from the KMNIST benchmark:
     https://github.com/rois-codh/kmnist/blob/master/benchmarks/kuzushiji_mnist_cnn.py
@@ -197,6 +202,8 @@ class MnistCNN(nn.Module):
             nn.Dropout(p=0.50)
         })
         self.layer5 = nn.ModuleDict({"fc": nn.Linear(self.hidden4, 10)})
+        self.layer_dict = {'layer2': self.layer2, 'layer3': self.layer3}
+        self.cache_activations()
 
     def forward(self, x):
         x = F.relu(self.layer1["conv"](x))
@@ -214,7 +221,7 @@ class MnistCNN(nn.Module):
 
 
 # TODO: pass in layer widths etc.
-class CIFAR10_BN_CNN_6(nn.Module):
+class CIFAR10_BN_CNN_6(CachingNet):
     """
     A 6-layer CNN using batch norm, sized for CIFAR-10
     """
@@ -253,6 +260,12 @@ class CIFAR10_BN_CNN_6(nn.Module):
             nn.Dropout(p=0.50)
         })
         self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
+        self.layer_dict = {
+            'layer2': self.layer2,
+            'layer3': self.layer3,
+            'layer4': self.layer4
+        }
+        self.cache_activations()
 
     def forward(self, x):
         x = F.relu(self.layer1["conv"](x))
@@ -271,7 +284,7 @@ class CIFAR10_BN_CNN_6(nn.Module):
         return math.prod(size)
 
 
-class CIFAR10_CNN_6(nn.Module):
+class CIFAR10_CNN_6(CachingNet):
     """
     A 6-layer CNN sized for CIFAR-10
     """
@@ -306,6 +319,12 @@ class CIFAR10_CNN_6(nn.Module):
             nn.Dropout(p=0.50)
         })
         self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
+        self.layer_dict = {
+            'layer2': self.layer2,
+            'layer3': self.layer3,
+            'layer4': self.layer4
+        }
+        self.cache_activations()
 
     def forward(self, x):
         x = F.relu(self.layer1["conv"](x))

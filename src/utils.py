@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import time
 
 import matplotlib.pyplot as plt
@@ -132,6 +133,10 @@ def get_weight_tensors_from_state_dict(state_dict, include_biases=False):
                 layer_array[-1]['bn_weights'] = tens
             if attr_name == "running_var":
                 layer_array[-1]['bn_running_var'] = tens
+            if attr_name == "bias":
+                layer_array[-1]['bn_bias'] = tens
+            if attr_name == "running_mean":
+                layer_array[-1]['bn_running_mean'] = tens
     check_layer_names(layer_array)
     return layer_array
 
@@ -142,15 +147,6 @@ def check_layer_names(layer_array):
     for i in range(len(layer_names)):
         for j in range(i + 1, len(layer_names)):
             assert layer_names[i] != layer_names[j], layer_name_problem
-
-
-def load_activations_numpy(activations_path, pytorch_device):
-    acts_dict = torch.load(activations_path, map_location=pytorch_device)
-
-    for key, val in acts_dict.items():
-        acts_dict[key] = val.detach().cpu().numpy()
-
-    return acts_dict
 
 
 def load_model_weights_numpy(model_path, pytorch_device, include_biases=False):
@@ -450,3 +446,44 @@ def calc_arg_deps(net, device, n=100, show_plot=False, fns=None):
         outputs = np.stack(outputs)
         totals.append(np.mean(np.var(outputs, axis=0)))
     return totals
+
+
+def np_layer_array_to_bn_param_dicts(np_layer_array, net_type):
+    """
+    Take in a layer array of numpy tensors, and return an array of dicts
+    of batch norm parameters for each layer that will end up in the graph.
+    If a layer does not use batch norm, then the dict will be empty.
+    """
+    assert net_type in ['mlp', 'cnn']
+    param_dicts = []
+    # take the first contiguous block of layers containing desired weight
+    # tensors
+    weight_name = 'fc_weights' if net_type == 'mlp' else 'conv_weights'
+
+    def has_weights(my_dict):
+        return weight_name in my_dict
+
+    for k, g in itertools.groupby(np_layer_array, has_weights):
+        if k:
+            weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
+            break
+
+    for layer_dict in weight_layers:
+        param_dict = {}
+        if 'bn_weights' in layer_dict:
+            param_dict['weight'] = layer_dict['bn_weights']
+        if 'bn_running_var' in layer_dict:
+            param_dict['running_var'] = layer_dict['bn_running_var']
+        if 'bn_bias' in layer_dict:
+            param_dict['bias'] = layer_dict['bn_bias']
+        if 'bn_running_mean' in layer_dict:
+            param_dict['running_mean'] = layer_dict['bn_running_mean']
+        param_dicts.append(param_dict)
+    return param_dicts
+
+
+def load_activations_numpy(activations_path, pytorch_device):
+    acts_dict = torch.load(activations_path, map_location=pytorch_device)
+    for key, val in acts_dict.items():
+        acts_dict[key] = val.detach().cpu().numpy()
+    return acts_dict

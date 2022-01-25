@@ -224,34 +224,64 @@ def normalize_weights_array(weights_array, eps=1e-5):
     return new_array
 
 
-def add_activation_gradients(weights_array, activation_dict):
+def add_activation_gradients(weights_array, activation_dict, net_type,
+                             bn_param_dicts):
     """
     Multiplies weights by the average derivative of the activation function of
     the neuron they point to. This makes the graph weights reflect partial
     derivatives of activations wrt activations, which is probably good.
-    Only works for ReLU MLPs without batch norm.
     WARNING: behaviour relies on dicts being nicely ordered, which is scary.
-    weights_array (array): list of numpy weight tensors of an MLP, in order.
+    weights_array (array): list of numpy weight tensors of the network,
+        in order.
     activation_dict (dict): dict of numpy activations of each layer, in same
         order.
-    returns: list of new weight tensors for a graph for the MLP.
+    net_type (str): specifies whether network is a CNN or MLP
+    bn_param_dicts (array(dict)): list of dicts of batch norm
+        params for each layer, with entries empty dicts if batch norm not used
+        in that layer. Params should be numpy arrays.
+    returns: list of new weight tensors for a graph for the net.
     """
-    props_on = []
-    for act_tens in activation_dict.values():
-        props_on.append(np.mean(0.5 * (np.sign(act_tens) + 1), axis=0))
+    def cnn_unsqueeze(tensor):
+        for i in range(1, 3):
+            tensor = np.expand_dims(tensor, i)
+        return tensor
+
     num_layers = len(weights_array)
+    if bn_param_dicts is not None:
+        assert len(bn_param_dicts) == num_layers
+
+    props_on = []
+    for (i, act_tens) in enumerate(activation_dict.values()):
+        bn_params = bn_param_dicts[i]
+        if 'running_mean' in bn_params.keys():
+            rmean = bn_params['running_mean']
+            if net_type == 'cnn':
+                rmean = cnn_unsqueeze(rmean)
+            act_tens -= rmean
+        if 'running_var' in bn_params.keys():
+            rvar = bn_params['running_var']
+            if net_type == 'cnn':
+                rvar = cnn_unsqueeze(rvar)
+            act_tens /= np.sqrt(rvar + 1e-5)
+        if 'weight' in bn_params.keys():
+            bn_weight = cnn_unsqueeze(bn_params['weight'])
+            act_tens *= bn_weight
+        if 'bias' in bn_params.keys():
+            bn_bias = cnn_unsqueeze(bn_params['bias'])
+            act_tens += bn_bias
+        axes_to_collapse = 0 if net_type == 'mlp' else (0, 2, 3)
+        props_on.append(
+            np.mean(0.5 * (np.sign(act_tens) + 1), axis=axes_to_collapse))
+
     assert len(props_on) == num_layers
     new_weights = []
     for (i, (wt, prop_vec)) in enumerate(zip(weights_array, props_on)):
-        if i != num_layers - 1:
-            # AFAICT, this is how you have to multiply along dim 0 in numpy
-            # weights arrays have shape (out_features, in_features), and
-            # props_on has shape (out_features,).
-            wt_trans = np.transpose(wt, (1, 0))
-            new_wt_trans = np.multiply(wt_trans, prop_vec)
-            new_weight = np.transpose(new_wt_trans, (1, 0))
-            new_weights.append(np.abs(new_weight))
+        if i != num_layers - 1 or net_type == 'cnn':
+            for i in range(prop_vec.ndim, wt.ndim):
+                prop_vec = np.expand_dims(prop_vec, i)
+            new_wt = np.multiply(wt, prop_vec)
+            new_weights.append(np.abs(new_wt))
         else:
-            # last layer has no relu
+            # last layer has no relu in mlps
             new_weights.append(np.abs(wt))
     return new_weights
