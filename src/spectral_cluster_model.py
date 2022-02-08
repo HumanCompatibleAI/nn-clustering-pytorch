@@ -227,7 +227,6 @@ def run_experiment(weights_path, mask_path, use_activations, acts_load_path,
     if use_activations:
         assert net_str is not None
         assert dataset is not None
-    if use_activations:
         acts_dict = (get_activations(net_type, net_str, state_dict, dataset)
                      if acts_load_path is None else load_activations_numpy(
                          acts_load_path, device))
