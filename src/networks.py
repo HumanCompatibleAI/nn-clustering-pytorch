@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # TODO: have params for size of network?
-# TODO: figure out how to get caching of activations for CNNs.
 
 
 class CachingNet(nn.Module):
@@ -22,6 +21,7 @@ class CachingNet(nn.Module):
     def __init__(self):
         super(CachingNet, self).__init__()
         self.layer_dict = {}
+        self.sequential_block = None
         # TODO: figure out how layer_dict works for nets constructed w/
         # sequential modules.
 
@@ -31,6 +31,12 @@ class CachingNet(nn.Module):
         """
         self.activations = {}
 
+        if self.sequential_block is not None:
+            seq_block = getattr(self, self.sequential_block)
+            for name, module in seq_block.named_children():
+                if not name.startswith('0_'):
+                    self.layer_dict[name] = module
+
         def hook(model, inp, out, name):
             self.activations[name] = out.detach()
 
@@ -38,9 +44,13 @@ class CachingNet(nn.Module):
             if hasattr(layer, 'fc'):
                 layer.fc.register_forward_hook(
                     functools.partial(hook, name=name))
+            elif isinstance(layer, nn.Linear):
+                layer.register_forward_hook(functools.partial(hook, name=name))
             elif hasattr(layer, 'conv'):
                 layer.conv.register_forward_hook(
                     functools.partial(hook, name=name))
+            elif isinstance(layer, nn.Conv2d):
+                layer.register_forward_hook(functools.partial(hook, name=name))
 
         return self.activations
 
@@ -343,7 +353,7 @@ class CIFAR10_CNN_6(CachingNet):
         return math.prod(size)
 
 
-class CIFAR10_VGG(nn.Module):
+class CIFAR10_VGG(CachingNet):
     """
     Code to generate VGGs for CIFAR-10 (together with make_layers). Modified
     from
@@ -364,6 +374,8 @@ class CIFAR10_VGG(nn.Module):
         self.fc_classifier = nn.Sequential(self.fc_ord_dict)
         if init_weights:
             self._initialize_weights()
+        self.sequential_block = 'conv_features'
+        self.cache_activations()
 
     def forward(self, x):
         x = self.conv_features(x)
