@@ -16,6 +16,7 @@ from graph_utils import (
     weights_to_graph,
 )
 from networks import CNN_DICT, MLP_DICT
+from train_model import csordas_get_input
 from utils import (
     load_activations_numpy,
     masked_weights_from_state_dicts,
@@ -180,7 +181,10 @@ def get_activations(net_type, net_str, state_dict, dataset):
     new_batch = next(iter(test_set_dict['all']))
     net.eval()
     with torch.no_grad():
-        _ = net(new_batch[0])
+        if dataset != 'add_mul':
+            _ = net(new_batch[0])
+        else:
+            _ = net(csordas_get_input(new_batch))
         acts_dict = net.activations
     for key, val in acts_dict.items():
         acts_dict[key] = val.detach().cpu().numpy()
