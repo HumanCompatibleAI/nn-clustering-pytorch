@@ -36,6 +36,7 @@ def delete_isolated_ccs(weights_array, adj_mat):
     isolated_ccs = set(range(nc)).difference(main_ccs)
     if not main_ccs:
         print("This neural network isn't connected from start to end.")
+        return None
     # if there aren't isolated ccs, don't bother deleting any
     if not isolated_ccs:
         return (weights_array, adj_mat, empty_del_array, empty_del_array,
