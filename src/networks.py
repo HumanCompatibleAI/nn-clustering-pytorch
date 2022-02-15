@@ -413,6 +413,11 @@ def make_layers(cfg, batch_norm=False):
             if batch_norm:
                 layers[f"{i}_bn"] = nn.BatchNorm2d(v)
             layers[f"{i}_relu"] = nn.ReLU()
+            if cfg[i + 1] != 'M':
+                dropout_rate = 0.3 if i != 0 else 0.4
+                layers[f"{i}_dropout"] = nn.Dropout(dropout_rate)
+            elif i == len(cfg) - 2:
+                layers[f"{i}_dropout"] = nn.Dropout(0.5)
             in_channels = v
     return nn.Sequential(layers)
 
