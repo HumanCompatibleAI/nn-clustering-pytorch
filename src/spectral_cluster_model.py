@@ -154,11 +154,14 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
         weights_array = add_activation_gradients(weights_array, acts_dict,
                                                  net_type, bn_params)
     adj_mat = weights_to_graph(weights_array)
-    _, adj_mat_, _, _, isolation_indicator = delete_isolated_ccs(
-        weights_array, adj_mat)
-    result = adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
-                                               eigen_solver, epsilon)
-    return result, isolation_indicator
+    net_stats = delete_isolated_ccs(weights_array, adj_mat)
+    if net_stats is None:
+        return None
+    else:
+        _, adj_mat_, _, _, isolation_indicator = net_stats
+        result = adj_mat_to_clustering_and_quality(adj_mat_, num_clusters,
+                                                   eigen_solver, epsilon)
+        return result, isolation_indicator
 
 
 def get_activations(net_type, net_str, state_dict, dataset):

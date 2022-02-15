@@ -155,8 +155,11 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
         big_tup = layer_array_to_clustering_and_quality(
             shuffled_layer_array, net_type, acts_dict, num_clusters,
             eigen_solver, normalize_weights, epsilon)
-        n_cut = big_tup[0][0]
-        n_cuts.append(n_cut)
+        if big_tup is None:
+            pass
+        else:
+            n_cut = big_tup[0][0]
+            n_cuts.append(n_cut)
     return n_cuts
 
 
