@@ -107,8 +107,8 @@ def shuffle_state_dict(shuffle_func, state_dict):
 
 
 def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
-                        net_str, dataset, eigen_solver, normalize_weights,
-                        epsilon, shuffle_method, seed_int):
+                        use_activations, net_str, dataset, eigen_solver,
+                        normalize_weights, epsilon, shuffle_method, seed_int):
     """
     shuffles a weights array a number of times, then finds the n-cut of each
     shuffle.
@@ -116,6 +116,8 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
     state_dict: state dict of the network, which containts torch tensors.
     net_type: string indicating whether the network is an MLP or a CNN.
     num_clusters: an int for the number of clusters to cluster into.
+    use_activations: bool indicating whether the network will be run to sample
+        activations to incorporate into initial clustering.
     net_str: string indicating which network architecture is being used (in
              order to play with activations), or None if activations aren't
              being used.
@@ -143,7 +145,8 @@ def shuffle_and_cluster(num_samples, state_dict, net_type, num_clusters,
         shuffled_state_dict = shuffle_state_dict(shuffle_func, state_dict)
         shuffled_layer_array = model_weights_from_state_dict_numpy(
             shuffled_state_dict)
-        if net_str is not None:
+        if use_activations:
+            assert net_str is not None
             assert dataset is not None
             acts_dict = get_activations(net_type, net_str, shuffled_state_dict,
                                         dataset)
@@ -221,9 +224,10 @@ def run_experiment(weights_path, mask_path, use_activations, acts_load_path,
     isolation_indicator = big_tup[1]
     time_int = get_random_int_time()
     shuffled_n_cuts = shuffle_and_cluster(num_samples, state_dict, net_type,
-                                          num_clusters, net_str, dataset,
-                                          eigen_solver, normalize_weights,
-                                          epsilon, shuffle_method, time_int)
+                                          num_clusters, use_activations,
+                                          net_str, dataset, eigen_solver,
+                                          normalize_weights, epsilon,
+                                          shuffle_method, time_int)
 
     shuff_mean = np.mean(shuffled_n_cuts)
     shuff_stdev = np.std(shuffled_n_cuts)
