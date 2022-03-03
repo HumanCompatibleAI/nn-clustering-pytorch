@@ -12,6 +12,7 @@ from sacred.utils import apply_backspaces_and_linefeeds
 
 from clusterability_gradient import LaplacianEigenvalues
 from datasets import SIMPLE_FUNCTIONS, load_datasets
+from graph_utils import MakeSensitivityGraph
 from networks import CNN_DICT, MLP_DICT, CachingNet
 from utils import (
     calc_arg_deps,
@@ -25,11 +26,6 @@ from utils import (
 train_exp = Experiment('train_model', interactive=True)
 train_exp.captured_out_filter = apply_backspaces_and_linefeeds
 train_exp.observers.append(FileStorageObserver('training_runs'))
-
-# probably should define a global variable for the list of datasets.
-# maybe in a utils file or something.
-
-# TODO: put the datasets in a different file.
 
 
 @train_exp.config
@@ -55,7 +51,8 @@ def mlp_config():
         'num_eigs': 3,
         'lambda': 1e-3,
         'frequency': 20,
-        'normalize': False
+        'normalize': False,
+        'use_sensitivity': False
     }
     optim_func = 'adam'
     optim_kwargs = {}
@@ -132,18 +129,23 @@ def csordas_get_input(data):
                       onehot_op.flatten(1)], -1).float()
 
 
-def module_array_to_clust_grad_input(weight_modules, net_type):
+def module_array_to_clust_grad_input(weight_modules, net_type, use_sensitivity,
+                                     activations):
     """
     Turns a layer_array of modules into objects that can be nicely fed into
     LaplacianEigenvalues.
-    weight_modules: list of dicts containing a layer name and a variety of
-                    pytorch modules
-    net_type: string specifying whether the network is a CNN or an MLP
+    weight_modules (list(dict)): dicts contain a layer name and a variety of
+        pytorch modules
+    net_type (string): specifies whether the network is a CNN or an MLP
+    use_sensitivity (bool): whether to cluster activation-based sensitivities
+        rather than the network weights
+    activations (dict): activation dictionary for the network.
     Returns: tuple of (list of pytorch tensors, list of strings specifying what
                                                 each tensor is)
     """
     tensor_array = []
     tensor_type_array = []
+    acts_list = list(activations.values())
     assert net_type in ['mlp', 'cnn']
     weight_module_name, weight_name = (('fc_mod',
                                         'fc_weights') if net_type == 'mlp' else
@@ -167,28 +169,33 @@ def module_array_to_clust_grad_input(weight_modules, net_type):
                 tensor_type_array.append('bn_weights')
             tensor_array.append(bn_mod.running_var)
             tensor_type_array.append('bn_running_var')
+    if use_sensitivity:
+        tensor_array = MakeSensitivityGraph.apply(acts_list, *tensor_array)
     return tensor_array, tensor_type_array
 
 
 def calculate_clust_reg(cluster_gradient_config, net_type, network):
     """
     Calculate the clusterability regularization term of a network.
-    cluster_gradient_config: dict containing 'num_eigs', the int number of
-                             eigenvalues to regularize, 'num_workers', the int
-                             number of CPU workers to use to calculate the
-                             gradient, 'lambda', the float regularization
-                             strength to use per eigenvalue, and 'frequency',
-                             the number of iterations between successive
-                             applications of the term.
-    net_type: string indicating whether the network is an MLP or a CNN
+    cluster_gradient_config (dict): contains
+        - 'num_eigs' (int): the number of eigenvalues to regularize
+        - 'num_workers' (int): the number of CPU workers to use to calculate
+            the gradient
+        - 'lambda' (float): the regularization strength to use per eigenvalue
+        - 'use_sensitivity' (bool): whether to cluster activation-based
+            sensitivities rather than the network weights
+    net_type (string): indicates whether the network is an MLP or a CNN
     network: a pytorch network.
     returns: a tensor float.
     """
     num_workers = cluster_gradient_config['num_workers']
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
+    use_sensitivity = cluster_gradient_config['use_sensitivity']
     weight_modules = get_weight_modules_from_live_net(network)
-    tensor_arrays = module_array_to_clust_grad_input(weight_modules, net_type)
+    acts = network.activations
+    tensor_arrays = module_array_to_clust_grad_input(weight_modules, net_type,
+                                                     use_sensitivity, acts)
     tensor_array, tensor_type_array = tensor_arrays
     eig_sum = torch.sum(
         LaplacianEigenvalues.apply(num_workers, num_eigs, net_type,

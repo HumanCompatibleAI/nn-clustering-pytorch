@@ -1,7 +1,10 @@
 import itertools
+import math
 
 import numpy as np
 import scipy.sparse as sparse
+import torch
+from torch.autograd import Function
 
 from utils import (
     size_and_multiply_np,
@@ -225,15 +228,16 @@ def normalize_weights_array(weights_array, eps=1e-5):
     return new_array
 
 
-def add_activation_gradients(weights_array, activation_dict, net_type,
-                             bn_param_dicts):
+def add_activation_gradients_np(weights_array, activation_dict, net_type,
+                                bn_param_dicts):
     """
     Multiplies weights by the average derivative of the activation function of
     the neuron they point to. This makes the graph weights reflect partial
     derivatives of activations wrt activations, which is probably good.
     WARNING: behaviour relies on dicts being nicely ordered, which is scary.
     weights_array (array): list of numpy weight tensors of the network,
-        in order.
+        in order. Code relies on this being the output of
+        np_layer_array_to_graph_weights_array
     activation_dict (dict): dict of numpy activations of each layer, in same
         order.
     net_type (str): specifies whether network is a CNN or MLP
@@ -271,8 +275,9 @@ def add_activation_gradients(weights_array, activation_dict, net_type,
             bn_bias = cnn_unsqueeze(bn_params['bias'])
             act_tens += bn_bias
         axes_to_collapse = 0 if net_type == 'mlp' else (0, 2, 3)
-        props_on.append(
-            np.mean(0.5 * (np.sign(act_tens) + 1), axis=axes_to_collapse))
+        if i != 0:
+            props_on.append(
+                np.mean(0.5 * (np.sign(act_tens) + 1), axis=axes_to_collapse))
 
     assert len(props_on) == num_layers
     new_weights = []
@@ -286,3 +291,168 @@ def add_activation_gradients(weights_array, activation_dict, net_type,
             # last layer has no relu in mlps
             new_weights.append(np.abs(wt))
     return new_weights
+
+
+def sensitivity_combine_means_sds(m1, m2, s1, s2):
+    m = (m1 * (s2**2) + m2 * (s1**2)) / (s1**2 + s2**2)
+    s = s1 * s2 / torch.sqrt(s1**2 + s2**2)
+    return m, s
+
+
+def get_front_constant(m1, m2, s1, s2, mc, sc):
+    m_mix = (m1**2 * s2**2 + m2**2 * s1**2) / (s1**2 + s2**2)
+    return ((sc / (np.sqrt(2 * math.pi) * s1 * s2)) * torch.exp(
+        (mc**2 - m_mix**2) / (2 * sc**2)))
+
+
+def pos_neg_factors(mc, sc):
+    exp_term = sc * torch.exp(-mc**2 / (2 * sc**2)) / np.sqrt(2 * math.pi)
+    erf_term = 0.5 * mc * torch.erf(mc / (np.sqrt(2) * sc))
+    return ((mc / 2) + exp_term + erf_term, (mc / 2) - exp_term - erf_term)
+
+
+class MakeSensitivityGraph(Function):
+    """
+    Takes a network, and returns new 'weights' that represent the average
+    partial derivative of each activation with respect to each previous layer
+    activation.
+    Currently assuming the network is an MLP, implement CNNs later.
+    Also currently ignoring that batchnorm exists.
+    """
+    @staticmethod
+    def forward(ctx, activation_array, *args):
+        # Basically: you run module_array_to_clust_grad_input
+        # apply this func to what's in that
+        # and then tack on the things that never made it to the graph weights
+        # having activations_indices, I know which things will be modified by
+        # this
+        # so everything's fine
+        # activations_indices should probably be the output of
+        # np_layer_array_to_graph_weights_array, so that I can't shoot myself
+        # in the foot too hard.
+        # OK so here's the question: does it take the whole net, or just a
+        # subset? If the whole net, then it conflicts with the code where you
+        # apply module_array_... to teh net before feeding into lap_eigs.
+        # If the output of module_array_..., you have to check that that's
+        # right.
+        # Look: just deal with this in module_array_to_clust_grad_input.
+        weight_array = [wt for wt in args]
+        num_weights = len(weight_array)
+        num_activations = len(activation_array)
+        props_on = [
+            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
+            for act_tens in activation_array
+        ]
+        sensitivities = []
+        for (i, wt_tens) in enumerate(weight_array):
+            if i != len(weight_array) - 1:
+                prop_vec = props_on[i + 1]  # skip the input activations
+                for j in range(prop_vec.ndim, wt_tens.ndim):
+                    prop_vec = torch.unsqueeze(prop_vec, j)
+                new_wt = torch.mul(wt_tens, prop_vec)
+                sensitivities.append(torch.abs(new_wt))
+            else:
+                sensitivities.append(torch.abs(wt_tens))
+        ctx.save_for_backward(torch.tensor(num_weights),
+                              torch.tensor(num_activations), *weight_array,
+                              *activation_array)
+        return tuple(sensitivities)
+
+    @staticmethod
+    def backward(ctx, *dys):
+        # TODO: figure out what dy actually is in this case
+        device = (torch.device("cuda")
+                  if torch.cuda.is_available() else torch.device("cpu"))
+        dy = [grad for grad in dys]
+        (num_weights_tens, num_activations_tens,
+         *misc_stuff) = ctx.saved_tensors
+        num_weights = num_weights_tens.item()
+        num_activations = num_activations_tens.item()
+        weight_array = misc_stuff[:num_weights]
+        activation_array = misc_stuff[num_weights:(num_activations +
+                                                   num_weights)]
+        # step 1: for every neuron, get mean + sd of that neuron's pre-relu
+        # activation + of the affine combo of everything else.
+        # (then multiply mean, sd for that neuron by -1/wij when computing
+        # factor for weight wij)
+        # OK here's what you actually do:
+        # get stats for all the zis.
+        # then, iterate over your js, modify the zi mean and sd, then calculate
+        # the z_{j - i} stats.
+        zi_means = []
+        zi_stds = []
+        for act_arr in activation_array:
+            zi_means.append(torch.mean(act_arr, dim=0))
+            zi_stds.append(torch.std(act_arr, dim=0))
+
+        d_frac_on_d_ws = []
+
+        # print("Shapes of things in activation_array")
+        # for arr in activation_array:
+        #     print(arr.shape)
+
+        for k, act_arr in enumerate(activation_array[1:], start=1):
+            wt = weight_array[k - 1]
+            # zi_means[k-1] has shape [n_in]
+            # zi_means[k] has shape [n_out]
+            # wt has shape [n_out, n_in]
+            # all means, stds, etc. will have same shape as wt
+            n_out, n_in = tuple(wt.shape)
+            wij_zi_mean = (-1) * torch.mul(wt, zi_means[k - 1])
+            wij_zi_std = torch.mul(wt, zi_stds[k - 1])
+            zj_means = torch.unsqueeze(zi_means[k], 1)
+            zj_minus_i_mean = torch.mul(wt, zi_means[k - 1]) - zj_means
+            # act_arr has shape [num_samples, n_out]
+            # print("k:", k)
+            prev_acts = activation_array[k - 1]
+            # prev_acts has shape [num_samples, n_in]
+            # print("n_out", n_out)
+            # print("n_in", n_in)
+            expanded_acts = torch.unsqueeze(act_arr, 2)
+            # print("shape of expanded acts", expanded_acts.shape)
+            expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
+            # print("shape of exp_prev_acts", expanded_prev_acts.shape)
+            # print("shape of wt", wt.shape)
+            wij_zi_samples = torch.mul(wt, expanded_prev_acts)
+            # print("shape of wij_zi_samples", wij_zi_samples.shape)
+            zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples, dim=0)
+            # pretty sure this is correct
+            mu_comb, sigma_comb = sensitivity_combine_means_sds(
+                wij_zi_mean, wij_zi_std, zj_minus_i_mean, zj_minus_i_std)
+            c = get_front_constant(wij_zi_mean, wij_zi_std, zj_minus_i_mean,
+                                   zj_minus_i_std, mu_comb, sigma_comb)
+            wt_pos, wt_neg = pos_neg_factors(mu_comb, sigma_comb)
+            d_frac_on_d_w = (c / (wt**2)) * torch.where(wt > 0, wt_pos, wt_neg)
+            d_frac_on_d_ws.append(d_frac_on_d_w)
+
+        props_on = [
+            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
+            for act_tens in activation_array
+        ]
+        new_grads = []
+        for (i, wt_i) in enumerate(weight_array):
+            if i != len(weight_array) - 1:
+                p_on = props_on[i + 1]
+                d_frac_on_d_w = d_frac_on_d_ws[i]
+                # d_frac_on_d_w has shape [n_out, n_in]
+                # want: create a thing with shape [n_out, n_in, n_in]
+                # and then contract over that.
+                n_out, n_in = tuple(wt_i.shape)
+                my_id = torch.eye(n_in).to(device)
+                expanded_id = torch.unsqueeze(my_id, 0).to(device)
+                expanded_p_on = torch.unsqueeze(torch.unsqueeze(p_on, 1),
+                                                2).to(device)
+                expanded_wt_i = torch.unsqueeze(wt_i, 1).to(device)
+                expanded_deriv = torch.unsqueeze(d_frac_on_d_w, 2).to(device)
+                expanded_dy = torch.unsqueeze(dy[i], 1).to(device)
+                new_grad = torch.sum(expanded_dy *
+                                     (expanded_p_on * expanded_id +
+                                      expanded_wt_i * expanded_deriv),
+                                     dim=2)
+                new_grads.append(new_grad)
+            else:
+                new_grads.append(dy[i])
+                # if wt_i didn't make it to the sensitivity graph,
+                # you'd append [None].
+
+        return tuple([None] + new_grads)

@@ -14,9 +14,11 @@ class CachingNet(nn.Module):
     activation-aware clustering.
     Upon initializing nets, be sure to add a layer_dict and run
     self.cache_activations() after initializing everything else.
-    Only works for MLPs at the moment.
     Because it saves the results of fc modules, it doesn't take batchnorm into
-    acccount.
+    account (that's handled in other parts of the code).
+    In order to make work with pytorch ops, store pre-ReLU activations one
+    layer before the activations you really care about (probably with an
+    identity op).
     """
     def __init__(self):
         super(CachingNet, self).__init__()
@@ -51,6 +53,11 @@ class CachingNet(nn.Module):
                     functools.partial(hook, name=name))
             elif isinstance(layer, nn.Conv2d):
                 layer.register_forward_hook(functools.partial(hook, name=name))
+            elif hasattr(layer, 'noop'):
+                layer.noop.register_forward_hook(
+                    functools.partial(hook, name=name))
+            elif isinstance(layer, nn.Identity):
+                layer.register_forward_hook(functools.partial(hook, name=name))
 
         return self.activations
 
@@ -65,6 +72,7 @@ class MnistMLP(CachingNet):
         self.hidden1 = 512
         self.hidden2 = 512
         self.hidden3 = 512
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer1 = nn.ModuleDict({"fc": nn.Linear(28 * 28, self.hidden1)})
         self.layer2 = nn.ModuleDict(
             {"fc": nn.Linear(self.hidden1, self.hidden2)})
@@ -72,6 +80,7 @@ class MnistMLP(CachingNet):
             {"fc": nn.Linear(self.hidden2, self.hidden3)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, 10)})
         self.layer_dict = {
+            'nooplayer': self.nooplayer,
             'layer1': self.layer1,
             'layer2': self.layer2,
             'layer3': self.layer3,
@@ -81,6 +90,7 @@ class MnistMLP(CachingNet):
 
     def forward(self, x):
         x = x.view(-1, 28 * 28)
+        x = self.nooplayer["noop"](x)
         x = F.relu(self.layer1["fc"](x))
         x = F.relu(self.layer2["fc"](x))
         x = F.relu(self.layer3["fc"](x))
@@ -94,12 +104,18 @@ class TinyMLP(CachingNet):
     """
     def __init__(self):
         super(TinyMLP, self).__init__()
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer1 = nn.ModuleDict({"fc": nn.Linear(3, 3)})
         self.layer2 = nn.ModuleDict({"fc": nn.Linear(3, 2)})
-        self.layer_dict = {'layer1': self.layer1, 'layer2': self.layer2}
+        self.layer_dict = {
+            'nooplayer': self.nooplayer,
+            'layer1': self.layer1,
+            'layer2': self.layer2
+        }
         self.cache_activations()
 
     def forward(self, x):
+        x = self.nooplayer["noop"](x)
         x = F.relu(self.layer1["fc"](x))
         x = self.layer2["fc"](x)
         return x
@@ -111,12 +127,14 @@ class AddMulMLP(CachingNet):
     """
     def __init__(self):
         super(AddMulMLP, self).__init__()
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer1 = nn.ModuleDict({"fc": nn.Linear(42, 2000)})
         self.layer2 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
         self.layer3 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(2000, 2000)})
         self.layer5 = nn.ModuleDict({"fc": nn.Linear(2000, 20)})
         self.layer_dict = {
+            'nooplayer': self.nooplayer,
             'layer1': self.layer1,
             'layer2': self.layer2,
             'layer3': self.layer3,
@@ -126,6 +144,7 @@ class AddMulMLP(CachingNet):
         self.cache_activations()
 
     def forward(self, x):
+        x = self.nooplayer["noop"](x)
         x = F.relu(self.layer1["fc"](x))
         x = F.relu(self.layer2["fc"](x))
         x = F.relu(self.layer3["fc"](x))
@@ -157,6 +176,7 @@ class SimpleMathMLP(CachingNet):
         self.hidden1 = hidden
         self.hidden2 = hidden
         self.hidden3 = hidden
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer1 = nn.ModuleDict({"fc": nn.Linear(inp, self.hidden1)})
         self.layer2 = nn.ModuleDict(
             {"fc": nn.Linear(self.hidden1, self.hidden2)})
@@ -164,6 +184,7 @@ class SimpleMathMLP(CachingNet):
             {"fc": nn.Linear(self.hidden2, self.hidden3)})
         self.layer4 = nn.ModuleDict({"fc": nn.Linear(self.hidden3, out)})
         self.layer_dict = {
+            'nooplayer': self.nooplayer,
             'layer1': self.layer1,
             'layer2': self.layer2,
             'layer3': self.layer3,
@@ -175,6 +196,7 @@ class SimpleMathMLP(CachingNet):
         if len(x.shape) == 1:
             x = x[:, None]
         act = F.relu
+        x = self.nooplayer["noop"](x)
         x = act(self.layer1["fc"](x))
         x = act(self.layer2["fc"](x))
         x = act(self.layer3["fc"](x))
@@ -195,6 +217,7 @@ class MnistCNN(CachingNet):
         self.hidden4 = 256
         # NOTE: conv layers MUST have names starting with 'conv'
         self.layer1 = nn.ModuleDict({"conv": nn.Conv2d(1, self.hidden1, 3)})
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer2 = nn.ModuleDict({
             "conv":
             nn.Conv2d(self.hidden1, self.hidden2, 3),
@@ -212,11 +235,16 @@ class MnistCNN(CachingNet):
             nn.Dropout(p=0.50)
         })
         self.layer5 = nn.ModuleDict({"fc": nn.Linear(self.hidden4, 10)})
-        self.layer_dict = {'layer2': self.layer2, 'layer3': self.layer3}
+        self.layer_dict = {
+            'nooplayer': self.nooplayer,
+            'layer2': self.layer2,
+            'layer3': self.layer3
+        }
         self.cache_activations()
 
     def forward(self, x):
-        x = F.relu(self.layer1["conv"](x))
+        x = self.layer1["conv"](x)
+        x = F.relu(self.nooplayer["noop"](x))
         x = F.relu(self.layer2["conv"](x))
         x = self.layer2["dropout"](self.layer2["maxPool"](x))
         x = F.relu(self.layer3["conv"](x))
@@ -245,6 +273,7 @@ class CIFAR10_BN_CNN_6(CachingNet):
         self.hidden5 = 256
         self.layer1 = nn.ModuleDict(
             {"conv": nn.Conv2d(3, self.hidden1, 3, padding=1)})
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer2 = nn.ModuleDict({
             "conv":
             nn.Conv2d(self.hidden1, self.hidden2, 3, padding=1),
@@ -271,6 +300,7 @@ class CIFAR10_BN_CNN_6(CachingNet):
         })
         self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
         self.layer_dict = {
+            'nooplayer': self.nooplayer,
             'layer2': self.layer2,
             'layer3': self.layer3,
             'layer4': self.layer4
@@ -278,7 +308,8 @@ class CIFAR10_BN_CNN_6(CachingNet):
         self.cache_activations()
 
     def forward(self, x):
-        x = F.relu(self.layer1["conv"](x))
+        x = self.layer1["conv"](x)
+        x = F.relu(self.nooplayer["noop"](x))
         x = F.relu(self.layer2["bn"](self.layer2["conv"](x)))
         x = self.layer2["maxPool"](x)
         x = F.relu(self.layer3["conv"](x))
@@ -308,6 +339,7 @@ class CIFAR10_CNN_6(CachingNet):
         self.hidden5 = 256
         self.layer1 = nn.ModuleDict(
             {"conv": nn.Conv2d(3, self.hidden1, 3, padding=1)})
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.layer2 = nn.ModuleDict({
             "conv":
             nn.Conv2d(self.hidden1, self.hidden2, 3, padding=1),
@@ -330,6 +362,7 @@ class CIFAR10_CNN_6(CachingNet):
         })
         self.layer6 = nn.ModuleDict({"fc": nn.Linear(self.hidden5, 10)})
         self.layer_dict = {
+            'nooplayer': self.nooplayer,
             'layer2': self.layer2,
             'layer3': self.layer3,
             'layer4': self.layer4
@@ -337,7 +370,8 @@ class CIFAR10_CNN_6(CachingNet):
         self.cache_activations()
 
     def forward(self, x):
-        x = F.relu(self.layer1["conv"](x))
+        x = self.layer1["conv"](x)
+        x = F.relu(self.nooplayer["noop"](x))
         x = F.relu(self.layer2["conv"](x))
         x = self.layer2["maxPool"](x)
         x = F.relu(self.layer3["conv"](x))
@@ -364,6 +398,7 @@ class CIFAR10_VGG(CachingNet):
     def __init__(self, conv_features, init_weights=True):
         super(CIFAR10_VGG, self).__init__()
         self.conv_features = conv_features
+        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.fc_ord_dict = OrderedDict([("0_dropout", nn.Dropout()),
                                         ("1_fc", nn.Linear(512, 512)),
                                         ("1_relu", nn.ReLU()),
@@ -375,6 +410,7 @@ class CIFAR10_VGG(CachingNet):
         if init_weights:
             self._initialize_weights()
         self.sequential_block = 'conv_features'
+        self.layer_dict = {'nooplayer': self.nooplayer}
         self.cache_activations()
 
     def forward(self, x):
@@ -412,6 +448,10 @@ def make_layers(cfg, batch_norm=False):
                                             padding=1)
             if batch_norm:
                 layers[f"{i}_bn"] = nn.BatchNorm2d(v)
+            if i == 0:
+                layers[f"{i}_noop"] = nn.Identity()
+                # add noop to record pre-relu inputs to first recorded
+                # activations
             layers[f"{i}_relu"] = nn.ReLU()
             if cfg[i + 1] != 'M':
                 dropout_rate = 0.3 if i != 0 else 0.4

@@ -9,7 +9,7 @@ from sklearn.cluster import SpectralClustering
 
 from datasets import load_datasets
 from graph_utils import (
-    add_activation_gradients,
+    add_activation_gradients_np,
     delete_isolated_ccs,
     normalize_weights_array,
     np_layer_array_to_graph_weights_array,
@@ -117,8 +117,6 @@ def adj_mat_to_clustering_and_quality(adj_mat, num_clusters, eigen_solver,
     eigen_solver: string or None representing which eigenvalue solver to use
                   for spectral clustering
     epsilon: small positive float to stop us dividing by zero
-    verbose: boolean determining whether we learn the n-cut term for each
-             cluster label
     returns a tuple: first element is a float that is the n-cut value, second
                      element is a list of labels of each node
     """
@@ -151,8 +149,8 @@ def layer_array_to_clustering_and_quality(layer_array, net_type, acts_dict,
     if normalize_weights:
         weights_array = normalize_weights_array(weights_array)
     if acts_dict is not None:
-        weights_array = add_activation_gradients(weights_array, acts_dict,
-                                                 net_type, bn_params)
+        weights_array = add_activation_gradients_np(weights_array, acts_dict,
+                                                    net_type, bn_params)
     adj_mat = weights_to_graph(weights_array)
     net_stats = delete_isolated_ccs(weights_array, adj_mat)
     if net_stats is None:
