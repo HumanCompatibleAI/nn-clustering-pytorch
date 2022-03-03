@@ -37,3 +37,5 @@ In both cases, there can only be one batch norm module between two linear transf
 TODOs:
   - Refactor code so that ablation_accuracy and compare_masks_clusters share functions
   - Docstrings in compare_masks_clusters
+  - Refactor code so that there's one function that pulls out the weight tensors that
+    get used in the graph (if possible)
