@@ -433,22 +433,24 @@ class MakeSensitivityGraph(Function):
         for (i, wt_i) in enumerate(weight_array):
             if i != len(weight_array) - 1:
                 p_on = props_on[i + 1]
+                # p_on has shape [n_out]
                 d_frac_on_d_w = d_frac_on_d_ws[i]
                 # d_frac_on_d_w has shape [n_out, n_in]
-                # want: create a thing with shape [n_out, n_in, n_in]
-                # and then contract over that.
-                n_out, n_in = tuple(wt_i.shape)
-                my_id = torch.eye(n_in).to(device)
-                expanded_id = torch.unsqueeze(my_id, 0).to(device)
-                expanded_p_on = torch.unsqueeze(torch.unsqueeze(p_on, 1),
-                                                2).to(device)
-                expanded_wt_i = torch.unsqueeze(wt_i, 1).to(device)
-                expanded_deriv = torch.unsqueeze(d_frac_on_d_w, 2).to(device)
-                expanded_dy = torch.unsqueeze(dy[i], 1).to(device)
-                new_grad = torch.sum(expanded_dy *
-                                     (expanded_p_on * expanded_id +
-                                      expanded_wt_i * expanded_deriv),
-                                     dim=2)
+                expanded_p_on = torch.unsqueeze(p_on, 1)
+                term_1 = torch.mul(dy[i], expanded_p_on)
+                grad_w_contract = torch.sum(torch.mul(dy[i], wt_i),
+                                            dim=1,
+                                            keepdim=True)
+                term_2 = torch.mul(grad_w_contract, d_frac_on_d_w)
+                new_grad = (term_1 + term_2).to(device)
+                # expanded_wt_i = torch.unsqueeze(wt_i, 1) # .to(device)
+                # expanded_deriv = torch.unsqueeze(d_frac_on_d_w, 2)
+                #                  #.to(device)
+                # expanded_dy = torch.unsqueeze(dy[i], 1)# .to(device)
+                # new_grad = torch.sum(expanded_dy *
+                #                      (expanded_p_on * expanded_id +
+                #                       expanded_wt_i * expanded_deriv),
+                #                      dim=2)
                 new_grads.append(new_grad)
             else:
                 new_grads.append(dy[i])
