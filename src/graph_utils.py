@@ -12,6 +12,9 @@ from utils import (
     weights_to_layer_widths,
 )
 
+# TODO March: re-check clust wrapper math, try to get around dividing by 0
+# (by using maths and logic?)
+
 
 def delete_isolated_ccs(weights_array, adj_mat):
     """
@@ -301,8 +304,11 @@ def sensitivity_combine_means_sds(m1, m2, s1, s2):
 
 def get_front_constant(m1, m2, s1, s2, mc, sc):
     m_mix = (m1**2 * s2**2 + m2**2 * s1**2) / (s1**2 + s2**2)
-    return ((sc / (np.sqrt(2 * math.pi) * s1 * s2)) * torch.exp(
-        (mc**2 - m_mix**2) / (2 * sc**2)))
+    exponand_ = (mc**2 - m_mix**2) / (2 * sc**2)
+    exponand = torch.minimum(exponand_,
+                             torch.tensor(30))  # to avoid getting infs
+    result = (sc / (np.sqrt(2 * math.pi) * s1 * s2)) * torch.exp(exponand)
+    return result
 
 
 def pos_neg_factors(mc, sc):
@@ -323,19 +329,6 @@ class MakeSensitivityGraph(Function):
     def forward(ctx, activation_array, *args):
         # Basically: you run module_array_to_clust_grad_input
         # apply this func to what's in that
-        # and then tack on the things that never made it to the graph weights
-        # having activations_indices, I know which things will be modified by
-        # this
-        # so everything's fine
-        # activations_indices should probably be the output of
-        # np_layer_array_to_graph_weights_array, so that I can't shoot myself
-        # in the foot too hard.
-        # OK so here's the question: does it take the whole net, or just a
-        # subset? If the whole net, then it conflicts with the code where you
-        # apply module_array_... to teh net before feeding into lap_eigs.
-        # If the output of module_array_..., you have to check that that's
-        # right.
-        # Look: just deal with this in module_array_to_clust_grad_input.
         weight_array = [wt for wt in args]
         num_weights = len(weight_array)
         num_activations = len(activation_array)
@@ -360,7 +353,6 @@ class MakeSensitivityGraph(Function):
 
     @staticmethod
     def backward(ctx, *dys):
-        # TODO: figure out what dy actually is in this case
         device = (torch.device("cuda")
                   if torch.cuda.is_available() else torch.device("cpu"))
         dy = [grad for grad in dys]
@@ -372,13 +364,7 @@ class MakeSensitivityGraph(Function):
         activation_array = misc_stuff[num_weights:(num_activations +
                                                    num_weights)]
         # step 1: for every neuron, get mean + sd of that neuron's pre-relu
-        # activation + of the affine combo of everything else.
-        # (then multiply mean, sd for that neuron by -1/wij when computing
-        # factor for weight wij)
-        # OK here's what you actually do:
-        # get stats for all the zis.
-        # then, iterate over your js, modify the zi mean and sd, then calculate
-        # the z_{j - i} stats.
+        # activation
         zi_means = []
         zi_stds = []
         for act_arr in activation_array:
@@ -386,10 +372,6 @@ class MakeSensitivityGraph(Function):
             zi_stds.append(torch.std(act_arr, dim=0))
 
         d_frac_on_d_ws = []
-
-        # print("Shapes of things in activation_array")
-        # for arr in activation_array:
-        #     print(arr.shape)
 
         for k, act_arr in enumerate(activation_array[1:], start=1):
             wt = weight_array[k - 1]
@@ -401,20 +383,14 @@ class MakeSensitivityGraph(Function):
             wij_zi_mean = (-1) * torch.mul(wt, zi_means[k - 1])
             wij_zi_std = torch.mul(wt, zi_stds[k - 1])
             zj_means = torch.unsqueeze(zi_means[k], 1)
+            # TODO: is this ignoring ReLUs?
             zj_minus_i_mean = torch.mul(wt, zi_means[k - 1]) - zj_means
             # act_arr has shape [num_samples, n_out]
-            # print("k:", k)
             prev_acts = activation_array[k - 1]
             # prev_acts has shape [num_samples, n_in]
-            # print("n_out", n_out)
-            # print("n_in", n_in)
             expanded_acts = torch.unsqueeze(act_arr, 2)
-            # print("shape of expanded acts", expanded_acts.shape)
             expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
-            # print("shape of exp_prev_acts", expanded_prev_acts.shape)
-            # print("shape of wt", wt.shape)
             wij_zi_samples = torch.mul(wt, expanded_prev_acts)
-            # print("shape of wij_zi_samples", wij_zi_samples.shape)
             zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples, dim=0)
             # pretty sure this is correct
             mu_comb, sigma_comb = sensitivity_combine_means_sds(
