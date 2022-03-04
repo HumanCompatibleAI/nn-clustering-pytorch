@@ -31,7 +31,8 @@ def adj_to_laplacian_and_degs(adj_mat_csr):
     inv_sqrt_deg_row = np.expand_dims(inv_sqrt_degrees, axis=0)
     result = adj_mat_csr.multiply(inv_sqrt_deg_row)
     result = result.multiply(inv_sqrt_deg_col)
-    return scipy.sparse.identity(num_rows, format='csr') - result, degree_vec
+    return (((1 + 1e-5) * scipy.sparse.identity(num_rows, format='csr') -
+             result), degree_vec)
 
 
 def get_neuron_contribs_dy_dW(layer, mat_list, degree_list, widths, pre_sums,
@@ -229,7 +230,7 @@ class LaplacianEigenvalues(Function):
         assert len(thin_w_array) == num_layers
         thin_w_tens_array = [torch.from_numpy(tens) for tens in thin_w_array]
         lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
-        evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, sigma=-1.0, which='LM')
+        evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, which='SM')
         evecs = np.transpose(evecs)
         # ^ makes evecs (num eigenvals) * (size of lap mat)
         outers = []
