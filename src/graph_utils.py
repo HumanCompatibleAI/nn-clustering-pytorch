@@ -297,14 +297,13 @@ def add_activation_gradients_np(weights_array, activation_dict, net_type,
 
 
 def sensitivity_combine_means_sds(m1, m2, s1, s2):
-    m = (m1 * (s2**2) + m2 * (s1**2)) / (s1**2 + s2**2)
     s = s1 * s2 / torch.sqrt(s1**2 + s2**2)
+    m = (s**2) * ((m1 / s1**2) + (m2 / s2**2))
     return m, s
 
 
 def get_front_constant(m1, m2, s1, s2, mc, sc):
-    m_mix = (m1**2 * s2**2 + m2**2 * s1**2) / (s1**2 + s2**2)
-    exponand_ = (mc**2 - m_mix**2) / (2 * sc**2)
+    exponand_ = 0.5 * ((mc**2 / sc**2) - (m1**2 / s1**2) - (m2**2 / s2**2))
     exponand = torch.minimum(exponand_,
                              torch.tensor(30))  # to avoid getting infs
     result = (sc / (np.sqrt(2 * math.pi) * s1 * s2)) * torch.exp(exponand)
@@ -315,6 +314,15 @@ def pos_neg_factors(mc, sc):
     exp_term = sc * torch.exp(-mc**2 / (2 * sc**2)) / np.sqrt(2 * math.pi)
     erf_term = 0.5 * mc * torch.erf(mc / (np.sqrt(2) * sc))
     return ((mc / 2) + exp_term + erf_term, (mc / 2) - exp_term - erf_term)
+
+
+def zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
+    pre_factor = (torch.exp(-zj_minus_i_mean**2 / (2 * zj_minus_i_std**2)) /
+                  (np.sqrt(2 * math.pi) * zj_minus_i_std))
+    term_1 = (zi_std * torch.exp(-zi_mean**2 / (2 * zi_std**2)) /
+              np.sqrt(2 * math.pi))
+    term_2 = 0.5 * zi_mean * torch.erf(zi_mean / (np.sqrt(2) * zi_std))
+    return pre_factor * (term_1 + term_2)
 
 
 class MakeSensitivityGraph(Function):
@@ -380,14 +388,15 @@ class MakeSensitivityGraph(Function):
             # wt has shape [n_out, n_in]
             # all means, stds, etc. will have same shape as wt
             n_out, n_in = tuple(wt.shape)
-            wij_zi_mean = (-1) * torch.mul(wt, zi_means[k - 1])
-            wij_zi_std = torch.mul(wt, zi_stds[k - 1])
+            zi_mean = zi_means[k - 1]
+            zi_std = zi_stds[k - 1]
+            wij_zi_mean = torch.mul(wt, zi_mean)
+            wij_zi_std = torch.abs(torch.mul(wt, zi_std))
             zj_means = torch.unsqueeze(zi_means[k], 1)
-            # TODO: is this ignoring ReLUs?
-            zj_minus_i_mean = torch.mul(wt, zi_means[k - 1]) - zj_means
-            # act_arr has shape [num_samples, n_out]
+            zj_minus_i_mean = torch.mul(wt, zi_mean) - zj_means
             prev_acts = activation_array[k - 1]
             # prev_acts has shape [num_samples, n_in]
+            # act_arr has shape [num_samples, n_out]
             expanded_acts = torch.unsqueeze(act_arr, 2)
             expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
             wij_zi_samples = torch.mul(wt, expanded_prev_acts)
@@ -398,7 +407,12 @@ class MakeSensitivityGraph(Function):
             c = get_front_constant(wij_zi_mean, wij_zi_std, zj_minus_i_mean,
                                    zj_minus_i_std, mu_comb, sigma_comb)
             wt_pos, wt_neg = pos_neg_factors(mu_comb, sigma_comb)
-            d_frac_on_d_w = (c / (wt**2)) * torch.where(wt > 0, wt_pos, wt_neg)
+            non_zero_deriv = (c / torch.abs(wt)) * torch.where(
+                wt > 0, wt_pos, wt_neg)
+            zero_deriv = zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean,
+                                           zj_minus_i_std)
+            d_frac_on_d_w = torch.where(wt == 0, zero_deriv, non_zero_deriv)
+            # TODO: for small W, use a better approximation
             d_frac_on_d_ws.append(d_frac_on_d_w)
 
         props_on = [
