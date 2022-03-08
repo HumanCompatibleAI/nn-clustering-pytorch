@@ -311,18 +311,32 @@ def get_front_constant(m1, m2, s1, s2, mc, sc):
 
 
 def pos_neg_factors(mc, sc):
-    exp_term = sc * torch.exp(-mc**2 / (2 * sc**2)) / np.sqrt(2 * math.pi)
+    exp_term = sc * torch.exp(-0.5 * mc**2 / sc**2) / np.sqrt(2 * math.pi)
     erf_term = 0.5 * mc * torch.erf(mc / (np.sqrt(2) * sc))
     return ((mc / 2) + exp_term + erf_term, (mc / 2) - exp_term - erf_term)
 
 
-def zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
-    pre_factor = (torch.exp(-zj_minus_i_mean**2 / (2 * zj_minus_i_std**2)) /
-                  (np.sqrt(2 * math.pi) * zj_minus_i_std))
-    term_1 = (zi_std * torch.exp(-zi_mean**2 / (2 * zi_std**2)) /
+def small_front_constant(zj_minus_i_mean, zj_minus_i_std):
+    factor = (torch.exp(-0.5 * zj_minus_i_mean**2 / zj_minus_i_std**2) /
+              (np.sqrt(2 * math.pi) * zj_minus_i_std))
+    return factor
+
+
+def pos_neg_small_weight(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
+    pre_factor = small_front_constant(zj_minus_i_mean, zj_minus_i_std)
+    term_1 = (zi_std * torch.exp(-0.5 * zi_mean**2 / zi_std**2) /
               np.sqrt(2 * math.pi))
     term_2 = 0.5 * zi_mean * torch.erf(zi_mean / (np.sqrt(2) * zi_std))
-    return pre_factor * (term_1 + term_2)
+    return (pre_factor * (term_1 + term_2 + 0.5 * zi_mean),
+            pre_factor * (term_1 + term_2 - 0.5 * zi_mean))
+
+
+def zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
+    small_pos, small_neg = pos_neg_small_weight(zi_mean, zi_std,
+                                                zj_minus_i_mean,
+                                                zj_minus_i_std)
+    result = 0.5 * (small_pos + small_neg)
+    return result
 
 
 class MakeSensitivityGraph(Function):
@@ -332,6 +346,7 @@ class MakeSensitivityGraph(Function):
     activation.
     Currently assuming the network is an MLP, implement CNNs later.
     Also currently ignoring that batchnorm exists.
+    TODO: set epsilon
     """
     @staticmethod
     def forward(ctx, activation_array, *args):
@@ -392,6 +407,14 @@ class MakeSensitivityGraph(Function):
             zi_std = zi_stds[k - 1]
             wij_zi_mean = torch.mul(wt, zi_mean)
             wij_zi_std = torch.abs(torch.mul(wt, zi_std))
+            # regularizing standard deviations
+            first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
+            wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
+                                        torch.tensor(1e-5))
+            first_percentile_zi_std = torch.quantile(zi_std, 0.01)
+            zi_std += torch.maximum(0.1 * first_percentile_zi_std,
+                                    torch.tensor(1e-5))
+
             zj_means = torch.unsqueeze(zi_means[k], 1)
             zj_minus_i_mean = torch.mul(wt, zi_mean) - zj_means
             prev_acts = activation_array[k - 1]
@@ -401,18 +424,27 @@ class MakeSensitivityGraph(Function):
             expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
             wij_zi_samples = torch.mul(wt, expanded_prev_acts)
             zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples, dim=0)
+            # regularizing standard deviations
+            first_percentile_zj_minus_i_std = torch.quantile(
+                zj_minus_i_std, 0.01)
+            zj_minus_i_std += torch.maximum(
+                0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
             # pretty sure this is correct
             mu_comb, sigma_comb = sensitivity_combine_means_sds(
-                wij_zi_mean, wij_zi_std, zj_minus_i_mean, zj_minus_i_std)
-            c = get_front_constant(wij_zi_mean, wij_zi_std, zj_minus_i_mean,
+                wij_zi_mean, zj_minus_i_mean, wij_zi_std, zj_minus_i_std)
+            c = get_front_constant(wij_zi_mean, zj_minus_i_mean, wij_zi_std,
                                    zj_minus_i_std, mu_comb, sigma_comb)
-            wt_pos, wt_neg = pos_neg_factors(mu_comb, sigma_comb)
-            non_zero_deriv = (c / torch.abs(wt)) * torch.where(
-                wt > 0, wt_pos, wt_neg)
+            big_wt_pos, big_wt_neg = pos_neg_factors(mu_comb, sigma_comb)
+            big_wt_deriv = (c / torch.abs(wt)) * torch.where(
+                wt > 0, big_wt_pos, big_wt_neg)
+            small_wt_pos, small_wt_neg = pos_neg_small_weight(
+                zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std)
+            small_wt_deriv = torch.where(wt > 0, small_wt_pos, small_wt_neg)
+            non_zero_deriv = torch.where(
+                torch.abs(wt) > 3e-3, big_wt_deriv, small_wt_deriv)
             zero_deriv = zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean,
                                            zj_minus_i_std)
             d_frac_on_d_w = torch.where(wt == 0, zero_deriv, non_zero_deriv)
-            # TODO: for small W, use a better approximation
             d_frac_on_d_ws.append(d_frac_on_d_w)
 
         props_on = [
@@ -427,20 +459,13 @@ class MakeSensitivityGraph(Function):
                 d_frac_on_d_w = d_frac_on_d_ws[i]
                 # d_frac_on_d_w has shape [n_out, n_in]
                 expanded_p_on = torch.unsqueeze(p_on, 1)
+                # dy[i] has shape [n_out, n_in]
                 term_1 = torch.mul(dy[i], expanded_p_on)
                 grad_w_contract = torch.sum(torch.mul(dy[i], wt_i),
                                             dim=1,
                                             keepdim=True)
                 term_2 = torch.mul(grad_w_contract, d_frac_on_d_w)
                 new_grad = (term_1 + term_2).to(device)
-                # expanded_wt_i = torch.unsqueeze(wt_i, 1) # .to(device)
-                # expanded_deriv = torch.unsqueeze(d_frac_on_d_w, 2)
-                #                  #.to(device)
-                # expanded_dy = torch.unsqueeze(dy[i], 1)# .to(device)
-                # new_grad = torch.sum(expanded_dy *
-                #                      (expanded_p_on * expanded_id +
-                #                       expanded_wt_i * expanded_deriv),
-                #                      dim=2)
                 new_grads.append(new_grad)
             else:
                 new_grads.append(dy[i])
