@@ -12,9 +12,6 @@ from utils import (
     weights_to_layer_widths,
 )
 
-# TODO March: re-check clust wrapper math, try to get around dividing by 0
-# (by using maths and logic?)
-
 
 def delete_isolated_ccs(weights_array, adj_mat):
     """
@@ -255,28 +252,28 @@ def add_activation_gradients_np(weights_array, activation_dict, net_type,
         return tensor
 
     num_layers = len(weights_array)
-    if bn_param_dicts is not None:
-        assert len(bn_param_dicts) == num_layers
+    assert len(bn_param_dicts) == num_layers
 
     props_on = []
     for (i, act_tens) in enumerate(activation_dict.values()):
-        bn_params = bn_param_dicts[i]
-        if 'running_mean' in bn_params.keys():
-            rmean = bn_params['running_mean']
-            if net_type == 'cnn':
-                rmean = cnn_unsqueeze(rmean)
-            act_tens -= rmean
-        if 'running_var' in bn_params.keys():
-            rvar = bn_params['running_var']
-            if net_type == 'cnn':
-                rvar = cnn_unsqueeze(rvar)
-            act_tens /= np.sqrt(rvar + 1e-5)
-        if 'weight' in bn_params.keys():
-            bn_weight = cnn_unsqueeze(bn_params['weight'])
-            act_tens *= bn_weight
-        if 'bias' in bn_params.keys():
-            bn_bias = cnn_unsqueeze(bn_params['bias'])
-            act_tens += bn_bias
+        if i < len(bn_param_dicts):
+            bn_params = bn_param_dicts[i]
+            if 'running_mean' in bn_params.keys():
+                rmean = bn_params['running_mean']
+                if net_type == 'cnn':
+                    rmean = cnn_unsqueeze(rmean)
+                act_tens -= rmean
+            if 'running_var' in bn_params.keys():
+                rvar = bn_params['running_var']
+                if net_type == 'cnn':
+                    rvar = cnn_unsqueeze(rvar)
+                    act_tens /= np.sqrt(rvar + 1e-5)
+            if 'weight' in bn_params.keys():
+                bn_weight = cnn_unsqueeze(bn_params['weight'])
+                act_tens *= bn_weight
+            if 'bias' in bn_params.keys():
+                bn_bias = cnn_unsqueeze(bn_params['bias'])
+                act_tens += bn_bias
         axes_to_collapse = 0 if net_type == 'mlp' else (0, 2, 3)
         if i != 0:
             props_on.append(
