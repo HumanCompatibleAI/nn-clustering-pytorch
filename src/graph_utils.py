@@ -352,8 +352,12 @@ class MakeSensitivityGraph(Function):
         weight_array = [wt for wt in args]
         num_weights = len(weight_array)
         num_activations = len(activation_array)
+        # remember, dimension 0 of activations is batch,
+        # dim 1 is neuron/channel,
+        # dim 2 is height (for convs),
+        # dim 3 is width (for convs)
         props_on = [
-            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
+            torch.mean(0.5 * (torch.sign(act_tens) + 1), dim=0)
             for act_tens in activation_array
         ]
         sensitivities = []
