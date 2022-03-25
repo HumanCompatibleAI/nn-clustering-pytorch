@@ -12,7 +12,7 @@ from graph_utils import (
     invert_deleted_neurons_np,
     weights_to_graph,
 )
-from utils import daniel_hash, size_and_multiply_np, size_sqrt_divide_np
+from utils import size_and_multiply_np, size_sqrt_divide_np
 
 
 def adj_to_laplacian_and_degs(adj_mat_csr):
@@ -216,7 +216,6 @@ class LaplacianEigenvalues(Function):
 
         # this array contains numpy versions of all input tensors
         np_tensor_array = [tens.detach().cpu().numpy() for tens in args]
-        num_tensors = len(np_tensor_array)
         # this array contains what the tensors would be if the weights absorbed
         # the batch norm stuff
         w_tens_np_array = tensor_arrays_to_graph_weights_array(
@@ -228,29 +227,22 @@ class LaplacianEigenvalues(Function):
         assert len(del_rows) == num_layers
         assert len(del_cols) == num_layers
         assert len(thin_w_array) == num_layers
-        thin_w_tens_array = [torch.from_numpy(tens) for tens in thin_w_array]
         lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
         evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, which='SM')
         evecs = np.transpose(evecs)
         # ^ makes evecs (num eigenvals) * (size of lap mat)
         outers = []
         for i in range(num_eigs):
-            outers.append(
-                torch.from_numpy(np.outer(evecs[i + 1], evecs[i + 1])))
-        del_rows_tensors = [torch.tensor(entry) for entry in del_rows]
-        del_cols_tensors = [torch.tensor(entry) for entry in del_cols]
-        hashed_net_type = daniel_hash(net_type)
-        hashed_tensor_types = [
-            torch.tensor(daniel_hash(name)) for name in tensor_type_array
-        ]
-        ctx.save_for_backward(torch.tensor(num_workers),
-                              torch.tensor(num_eigs),
-                              torch.tensor(num_tensors),
-                              torch.tensor(num_layers),
-                              torch.tensor(hashed_net_type),
-                              torch.from_numpy(degree_vec), *thin_w_tens_array,
-                              *del_rows_tensors, *del_cols_tensors, *outers,
-                              *hashed_tensor_types, *args)
+            outers.append(np.outer(evecs[i + 1], evecs[i + 1]))
+        ctx.num_workers = num_workers
+        ctx.net_type = net_type
+        ctx.degree_vec = degree_vec
+        ctx.thin_w_np_array = thin_w_array
+        ctx.del_rows = del_rows
+        ctx.del_cols = del_cols
+        ctx.outers = outers
+        ctx.tensor_types = tensor_type_array
+        ctx.save_for_backward(*args)
         return torch.from_numpy(evals[1:])
 
     @staticmethod
@@ -259,37 +251,23 @@ class LaplacianEigenvalues(Function):
         device = (torch.device("cuda")
                   if torch.cuda.is_available() else torch.device("cpu"))
         # recover saved tensors
-        (num_workers_tens, num_eigs_tens, num_tensors_tens, num_layers_tens,
-         hashed_net_type_tens, degree_vec_tens,
-         *misc_stuff) = ctx.saved_tensors
-        num_workers = num_workers_tens.item()
-        num_eigs = num_eigs_tens.item()
-        num_tensors = num_tensors_tens.item()
-        num_layers = num_layers_tens.item()
-        hashed_net_type = hashed_net_type_tens.item()
-        assert hashed_net_type in [daniel_hash('mlp'), daniel_hash('cnn')]
-        net_type = 'mlp' if hashed_net_type == daniel_hash('mlp') else 'cnn'
-        degree_vec = degree_vec_tens.detach().cpu().numpy()
-        assert len(misc_stuff) == 3 * num_layers + num_eigs + 2 * num_tensors
-        thin_w_tens_array = misc_stuff[:num_layers]
-        del_rows_tens = misc_stuff[num_layers:2 * num_layers]
-        del_cols_tens = misc_stuff[2 * num_layers:3 * num_layers]
-        outers_tens = misc_stuff[3 * num_layers:3 * num_layers + num_eigs]
-        hashed_tens_types_tens = misc_stuff[3 * num_layers +
-                                            num_eigs:3 * num_layers +
-                                            num_eigs + num_tensors]
-        tens_array = misc_stuff[3 * num_layers + num_eigs + num_tensors:]
-        thin_w_np_array = [
-            tens.detach().cpu().numpy() for tens in thin_w_tens_array
-        ]
-        del_rows = [
-            entry.detach().cpu().numpy().tolist() for entry in del_rows_tens
-        ]
-        del_cols = [
-            entry.detach().cpu().numpy().tolist() for entry in del_cols_tens
-        ]
-        outers = [outer.detach().cpu().numpy() for outer in outers_tens]
-        hashed_tens_types = [entry.item() for entry in hashed_tens_types_tens]
+        num_workers = ctx.num_workers
+        net_type = ctx.net_type
+        assert net_type in ['mlp', 'cnn']
+        degree_vec = ctx.degree_vec
+        thin_w_np_array = ctx.thin_w_np_array
+        del_rows = ctx.del_rows
+        del_cols = ctx.del_cols
+        outers = ctx.outers
+        tensor_types = ctx.tensor_types
+        tens_array = ctx.saved_tensors
+        # keeping this in case del_rows and del_cols actually have to be lists
+        # del_rows = [
+        #     entry.detach().cpu().numpy().tolist() for entry in del_rows_tens
+        # ]
+        # del_cols = [
+        #     entry.detach().cpu().numpy().tolist() for entry in del_cols_tens
+        # ]
         np_tens_array = [tens.detach().cpu().numpy() for tens in tens_array]
 
         # calculate gradient wrt 'thin tensors' (post deletion of isolated ccs)
@@ -308,7 +286,7 @@ class LaplacianEigenvalues(Function):
             # fat_grads.append(torch.from_numpy(fat_grad).to(device))
             fat_grads.append(fat_grad)
         # calculate gradient wrt all input tensors
-        # basically, go thru hashed_tens_types. if you correspond to just a
+        # basically, go thru tensor_types. if you correspond to just a
         # weight matrix, then you stay put. if you correspond to a weight
         # matrix + batch norm stuff, then calculate gradients for all of the
         # stuff.
@@ -322,35 +300,34 @@ class LaplacianEigenvalues(Function):
         # we won't manually edit the running variance, and will hope that sorts
         # itself out.
         final_grad = []
-        weight_name = (daniel_hash('fc_weights')
-                       if net_type == 'mlp' else daniel_hash('conv_weights'))
-        grouped_hash_types = []
-        assert hashed_tens_types[0] == weight_name
-        for i, h_type in enumerate(hashed_tens_types):
-            if h_type == weight_name:
-                grouped_hash_types.append([weight_name])
+        weight_name = ('fc_weights' if net_type == 'mlp' else 'conv_weights')
+        grouped_tens_types = []
+        assert tensor_types[0] == weight_name
+        for i, tens_type in enumerate(tensor_types):
+            if tens_type == weight_name:
+                grouped_tens_types.append([weight_name])
             else:
-                grouped_hash_types[-1].append(h_type)
-        # grouped_hash_types should look like
+                grouped_tens_types[-1].append(tens_type)
+        # grouped_tens_types should look like
         # [[weight_name], [weight_name], [weight_name, bn_weights,
         # bn_running_var], [weight_name, bn_running_var], [weight_name]]
-        assert len(grouped_hash_types) == len(fat_grads)
+        assert len(grouped_tens_types) == len(fat_grads)
         # turn gradients into gradients for weights and batch norm stuff
         # separately.
         for (i, grad) in enumerate(fat_grads):
-            current_group = grouped_hash_types[i]
+            current_group = grouped_tens_types[i]
             assert current_group[0] == weight_name
             if len(current_group) == 1:
                 final_grad.append(torch.from_numpy(grad).to(device))
             else:
                 np_tens_start_index = sum(
-                    [len(group) for group in grouped_hash_types[:i]])
+                    [len(group) for group in grouped_tens_types[:i]])
                 tens_dict = {'weights': np_tens_array[np_tens_start_index]}
                 for j in range(1, len(current_group)):
                     tens = np_tens_array[np_tens_start_index + j]
-                    if current_group[j] == daniel_hash('bn_running_var'):
+                    if current_group[j] == 'bn_running_var':
                         tens_dict['bn_running_var'] = tens
-                    if current_group[j] == daniel_hash('bn_weights'):
+                    if current_group[j] == 'bn_weights':
                         tens_dict['bn_weights'] = tens
                 assert 'bn_running_var' in tens_dict \
                     or 'bn_weights' in tens_dict
@@ -371,9 +348,8 @@ class LaplacianEigenvalues(Function):
                     bn_w_grad = np.multiply(bn_w_grad, tens_dict['weights'])
                     bn_w_grad = np.sum(bn_w_grad,
                                        tuple(range(1, bn_w_grad.ndim)))
-                    w_index = current_group.index(daniel_hash('bn_weights'))
-                    v_index = current_group.index(
-                        daniel_hash('bn_running_var'))
+                    w_index = current_group.index('bn_weights')
+                    v_index = current_group.index('bn_running_var')
                     assert w_index != v_index
                     if w_index < v_index:
                         final_grad.append(
