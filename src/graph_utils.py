@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 import scipy.sparse as sparse
+import scipy.special
 import torch
 from torch.autograd import Function
 
@@ -293,6 +294,285 @@ def add_activation_gradients_np(weights_array, activation_dict, net_type,
     return new_weights
 
 
+class MakeSensitivityGraph(Function):
+    """
+    Takes a network, and returns new 'weights' that represent the average
+    partial derivative of each activation with respect to each previous layer
+    activation.
+    Currently assuming the network is an MLP, implement CNNs later.
+    Also currently ignoring that batchnorm exists.
+    TODO: set epsilon
+    """
+    @staticmethod
+    def forward(ctx, activation_array, tensor_data_array, *args):
+        # Basically: you run module_array_to_clust_grad_input
+        # apply this func to what's in that
+        weight_array = [wt for wt in args]
+        num_weights = len(weight_array)
+        assert len(tensor_data_array) == num_weights
+        num_activations = len(activation_array)
+        # remember, dimension 0 of activations is batch,
+        # dim 1 is neuron/channel,
+        # dim 2 is height (for convs),
+        # dim 3 is width (for convs)
+        props_on = [
+            torch.mean(0.5 * (torch.sign(act_tens) + 1),
+                       dim=dims_to_collapse_acts(act_tens))
+            for act_tens in activation_array
+        ]
+        sensitivities = []
+        for (i, wt_tens) in enumerate(weight_array):
+            if i != len(weight_array) - 1:
+                prop_vec = props_on[i + 1]  # skip the input activations
+                for j in range(prop_vec.ndim, wt_tens.ndim):
+                    prop_vec = torch.unsqueeze(prop_vec, j)
+                new_wt = torch.mul(wt_tens, prop_vec)
+                sensitivities.append(torch.abs(new_wt))
+            else:
+                sensitivities.append(torch.abs(wt_tens))
+        ctx.num_weights = num_weights
+        ctx.num_activations = num_activations
+        ctx.tensor_data_array = tensor_data_array
+        ctx.save_for_backward(*weight_array, *activation_array)
+        return tuple(sensitivities)
+
+    @staticmethod
+    def backward(ctx, *dys):
+        device = (torch.device("cuda")
+                  if torch.cuda.is_available() else torch.device("cpu"))
+        dy = [grad for grad in dys]
+        num_weights = ctx.num_weights
+        num_activations = ctx.num_activations
+        tensor_data_array = ctx.tensor_data_array
+        misc_stuff = ctx.saved_tensors
+        weight_array = misc_stuff[:num_weights]
+        assert len(weight_array) == len(tensor_data_array)
+        activation_array = misc_stuff[num_weights:(num_activations +
+                                                   num_weights)]
+        # step 1: for every neuron, get mean + sd of that neuron's pre-relu
+        # activation
+        zi_means = []
+        zi_stds = []
+        for act_arr in activation_array:
+            # for CNNs, preserve spatial means+stds
+            zi_means.append(torch.mean(act_arr, dim=0))
+            zi_stds.append(torch.std(act_arr, dim=0))
+
+        d_frac_on_d_ws = []
+
+        for k, act_arr in enumerate(activation_array[1:], start=1):
+            wt = weight_array[k - 1]
+            # i means in_neuron/channel, j means out_neuron/channel
+            if len(wt.shape) == 2:
+                # zi_means[k-1] has shape [n_in]
+                # zi_means[k] has shape [n_out]
+                # wt has shape [n_out, n_in]
+                # all means, stds, etc. will have same shape as wt
+                n_out, n_in = wt.shape
+                zi_mean = zi_means[k - 1]
+                zi_std = zi_stds[k - 1]
+                wij_zi_mean = torch.mul(wt, zi_mean)
+                wij_zi_std = torch.abs(torch.mul(wt, zi_std))
+                # regularizing standard deviations
+                first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
+                wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
+                                            torch.tensor(1e-5))
+                first_percentile_zi_std = torch.quantile(zi_std, 0.01)
+                zi_std += torch.maximum(0.1 * first_percentile_zi_std,
+                                        torch.tensor(1e-5))
+
+                zj_means = torch.unsqueeze(zi_means[k], 1)
+                prev_acts = activation_array[k - 1]
+                # prev_acts has shape [num_samples, n_in]
+                zj_minus_i_mean = torch.mul(wt, zi_mean) - zj_means
+                # act_arr has shape [num_samples, n_out]
+                expanded_acts = torch.unsqueeze(act_arr, 2)
+                expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
+                wij_zi_samples = torch.mul(wt, expanded_prev_acts)
+                zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples,
+                                           dim=0)
+                # regularizing standard deviations
+                first_percentile_zj_minus_i_std = torch.quantile(
+                    zj_minus_i_std, 0.01)
+                zj_minus_i_std += torch.maximum(
+                    0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
+                # pretty sure this is correct
+                mu_comb, sigma_comb = sensitivity_combine_means_sds(
+                    wij_zi_mean, zj_minus_i_mean, wij_zi_std, zj_minus_i_std)
+                c = get_front_constant(wij_zi_mean, zj_minus_i_mean,
+                                       wij_zi_std, zj_minus_i_std, mu_comb,
+                                       sigma_comb)
+                big_wt_pos, big_wt_neg = pos_neg_factors(mu_comb, sigma_comb)
+                big_wt_deriv = (c / torch.abs(wt)) * torch.where(
+                    wt > 0, big_wt_pos, big_wt_neg)
+                small_wt_pos, small_wt_neg = pos_neg_small_weight(
+                    zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std)
+                small_wt_deriv = torch.where(wt > 0, small_wt_pos,
+                                             small_wt_neg)
+                non_zero_deriv = torch.where(
+                    torch.abs(wt) > 3e-3, big_wt_deriv, small_wt_deriv)
+                zero_deriv = zero_weight_deriv(zi_mean, zi_std,
+                                               zj_minus_i_mean, zj_minus_i_std)
+                d_frac_on_d_w = torch.where(wt == 0, zero_deriv,
+                                            non_zero_deriv)
+            elif len(wt.shape) == 4:
+                # remember: j is out, i is in.
+                # zi_means[k-1] has shape [n_in, h_in, w_in]
+                # zi_means[k] has shape[n_out, h_out, w_out]
+                # wt has shape [n_out, n_in, kernel_h, kernel_w]
+                n_out, n_in, kernel_h, kernel_w = wt.shape
+                zi_mean = zi_means[k - 1]
+                zi_std = zi_stds[k - 1]
+                zi_mean_avgd = torch.mean(zi_mean, dims=[1, 2])
+                zi_std_avgd = torch.mean(zi_std, dims=[1, 2])
+                # for wij_zi stats, take mean over h and w, and have the shape
+                # be [out_channels, in_channels, kernel_h, kernel_w]
+                wij_zi_mean = wt * zi_mean_avgd[:, None, None]
+                wij_zi_std = torch.abs(wt * zi_std_avgd[:, None, None])
+                # regularizing standard deviations
+                first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
+                wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
+                                            torch.tensor(1e-5))
+                first_percentile_zi_std = torch.quantile(zi_std, 0.01)
+                zi_std += torch.maximum(0.1 * first_percentile_zi_std,
+                                        torch.tensor(1e-5))
+
+                # Next, get means and standard deviations of -z^{j-i}:
+                # Basically, the contribution of convolving over everything
+                # other than z^i to z^j (but actually the negative of that).
+                zj_mean = zi_means[k]
+                prev_acts = activation_array[k - 1]
+                # prev_acts has shape [num_samples, n_in, h_in, w_in]
+                wt_slices = torch.split(wt, split_size_or_sections=1, dim=1)
+                # each wt_slice has shape [n_out, 1, k_h, k_w]
+                prev_acts_slices = torch.split(
+                    torch.nn.functional.relu(prev_acts),
+                    split_size_or_sections=1,
+                    dim=1)
+                # each prev_acts_slice has shape [num_samples, 1, h_in, w_in]
+                # the weight we're using is at index k-1
+                padding = tensor_data_array[k - 1]['padding']
+                wij_conv_relu_zi = []
+                assert len(wt_slices) == len(prev_acts_slices)
+                for (wt_slice, prev_acts_slice) in zip(wt_slices,
+                                                       prev_acts_slices):
+                    wij_conv_relu_zi.append(
+                        torch.nn.functional.conv2d(prev_acts_slice,
+                                                   wt_slice,
+                                                   padding=padding))
+                # wij_conv_relu_zi has length n_in
+                # each entry has shape [num_samples, n_out, h_out, w_out]
+                zj_minus_i_mean_ = torch.stack([
+                    torch.mean(conv_product, dim=0) - zj_mean
+                    for conv_product in wij_conv_relu_zi
+                ],
+                                               dim=0)
+                zj_minus_i_std_ = torch.stack([
+                    torch.std(conv_product - zj_mean, dim=0)
+                    for conv_product in wij_conv_relu_zi
+                ],
+                                              dim=0)
+                zj_minus_i_mean = torch.transpose(zj_minus_i_mean_, 0, 1)
+                zj_minus_i_std = torch.transpose(zj_minus_i_std_, 0, 1)
+                # regularize standard deviation
+                first_percentile_zj_minus_i_std = torch.quantile(
+                    zj_minus_i_std, 0.01)
+                zj_minus_i_std += torch.maximum(
+                    0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
+                # these tensors have shape [n_out, n_in, h_out, w_out]
+
+                # Next, get means and standard deviations of product of
+                # convolution, ignoring the weight in question.
+                zi_mean_trunc, zi_std_trunc = relu_normal_stats_torch(
+                    zi_mean_avgd, zi_std_avgd)
+                # these each have dimension [n_in]
+                _, h_out, w_out = zj_mean.shape
+                sum_ws = torch.zeros(n_out, n_in, kernel_h, kernel_w, h_out,
+                                     w_out)
+                sum_w2s = torch.zeros(n_out, n_in, kernel_h, kernel_w, h_out,
+                                      w_out)
+                for k_h, k_w in itertools.product(range(kernel_h),
+                                                  range(kernel_w)):
+                    sub_sum_w = torch.zeros(n_out, n_in, h_out, w_out)
+                    sub_sum_w2 = torch.zeros(n_out, n_in, h_out, w_out)
+                    for h, w in itertools.product(range(h_out), range(w_out)):
+                        mask_tens = torch.ones(wt.shape, dtype=torch.bool)
+                        mask_tens[:, :, k_h, k_w] = False
+                        to_mask_list = get_mask_list(h, w, h_out, w_out,
+                                                     kernel_h, kernel_w,
+                                                     padding)
+                        for k_h_, k_w_ in to_mask_list:
+                            mask_tens[:, :, k_h_, k_w_] = False
+                        sub_sum_w[:, :, h, w] = torch.sum(mask_tens * wt,
+                                                          dims=[2, 3])
+                        sub_sum_w2[:, :, h, w] = torch.sum(mask_tens * wt**2,
+                                                           dims=[2, 3])
+                    sum_ws[:, :, k_h, k_w, :, :] = sub_sum_w
+                    sum_w2s[:, :, k_h, k_w, :, :] = sub_sum_w2
+                conv_minus_kh_kw_mean = sum_ws * zi_mean_trunc[None, :, None,
+                                                               None, None,
+                                                               None]
+                conv_minus_kh_kw_std = sum_ws * zi_std_trunc[None, :, None,
+                                                             None, None, None]
+                # these all have shape
+                # [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
+                # now regularize stdev
+                first_percentile_conv_stdev = torch.quantile(
+                    conv_minus_kh_kw_std, 0.01)
+                conv_minus_kh_kw_std += torch.maximum(
+                    0.1 * first_percentile_conv_stdev, torch.tensor(1e-5))
+
+                # Now: just got to put all these together.
+                far_from_0_grad = analytic_cnn_gradient_far_from_0(
+                    wt, zj_minus_i_mean, zj_minus_i_std, conv_minus_kh_kw_mean,
+                    conv_minus_kh_kw_std, wij_zi_mean, wij_zi_std)
+                near_0_grad = analytic_cnn_gradient_near_0(
+                    zj_minus_i_mean, zj_minus_i_std, conv_minus_kh_kw_mean,
+                    conv_minus_kh_kw_std, zi_mean_avgd, zi_std_avgd)
+                d_frac_on_h_w_d_w = torch.where(
+                    torch.abs(wt) > 3e-3, far_from_0_grad, near_0_grad)
+                # above has shape
+                # [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
+                d_frac_on_d_w = torch.mean(d_frac_on_h_w_d_w, dim=[4, 5])
+                # d_frac_on_d_w has shape [n_out, n_in, kernel_h, kernel_w]
+            else:
+                confuse_string = ("I don't understand the shape of this " +
+                                  "weight tensor")
+                assert False, confuse_string
+            d_frac_on_d_ws.append(d_frac_on_d_w)
+
+        props_on = [
+            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
+            for act_tens in activation_array
+        ]
+        new_grads = []
+        for (i, wt_i) in enumerate(weight_array):
+            if i != len(weight_array) - 1:
+                p_on = props_on[i + 1]
+                # p_on has shape [n_out]
+                d_frac_on_d_w = d_frac_on_d_ws[i]
+                # d_frac_on_d_w has shape [n_out, n_in]
+                # (or [n_out, n_in, kernel_h, kernel_w] for CNNs)
+                expanded_p_on = (p_on[:, None] if len(wt_i.shape) == 2 else
+                                 p_on[:, None, None, None])
+                # dy[i] has shape [n_out, n_in]
+                # (or [n_out, n_in, kernel_h, kernel_w] for CNNs)
+                term_1 = dy[i] * expanded_p_on
+                contract_dims = list(range(1, len(wt_i.shape)))
+                grad_w_contract = torch.sum(torch.mul(dy[i], wt_i),
+                                            dim=contract_dims,
+                                            keepdim=True)
+                term_2 = grad_w_contract * d_frac_on_d_w
+                new_grad = (term_1 + term_2).to(device)
+                new_grads.append(new_grad)
+            else:
+                new_grads.append(dy[i])
+                # if wt_i didn't make it to the sensitivity graph,
+                # you'd append [None].
+
+        return tuple([None, None] + new_grads)
+
+
 def sensitivity_combine_means_sds(m1, m2, s1, s2):
     s = s1 * s2 / torch.sqrt(s1**2 + s2**2)
     m = (s**2) * ((m1 / s1**2) + (m2 / s2**2))
@@ -336,141 +616,115 @@ def zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
     return result
 
 
-class MakeSensitivityGraph(Function):
+def relu_normal_stats_torch(orig_mu, orig_sigma):
     """
-    Takes a network, and returns new 'weights' that represent the average
-    partial derivative of each activation with respect to each previous layer
-    activation.
-    Currently assuming the network is an MLP, implement CNNs later.
-    Also currently ignoring that batchnorm exists.
-    TODO: set epsilon
+    If a normal random variable has mean orig_mu and orig_sigma, this
+    function computes the mean and standard deviation of the ReLU of that
+    random variable.
     """
-    @staticmethod
-    def forward(ctx, activation_array, *args):
-        # Basically: you run module_array_to_clust_grad_input
-        # apply this func to what's in that
-        weight_array = [wt for wt in args]
-        num_weights = len(weight_array)
-        num_activations = len(activation_array)
-        # remember, dimension 0 of activations is batch,
-        # dim 1 is neuron/channel,
-        # dim 2 is height (for convs),
-        # dim 3 is width (for convs)
-        props_on = [
-            torch.mean(0.5 * (torch.sign(act_tens) + 1), dim=0)
-            for act_tens in activation_array
-        ]
-        sensitivities = []
-        for (i, wt_tens) in enumerate(weight_array):
-            if i != len(weight_array) - 1:
-                prop_vec = props_on[i + 1]  # skip the input activations
-                for j in range(prop_vec.ndim, wt_tens.ndim):
-                    prop_vec = torch.unsqueeze(prop_vec, j)
-                new_wt = torch.mul(wt_tens, prop_vec)
-                sensitivities.append(torch.abs(new_wt))
-            else:
-                sensitivities.append(torch.abs(wt_tens))
-        ctx.save_for_backward(torch.tensor(num_weights),
-                              torch.tensor(num_activations), *weight_array,
-                              *activation_array)
-        return tuple(sensitivities)
+    new_mu = (0.5 * orig_mu * (1 + torch.erf(orig_mu /
+                                             (np.sqrt(2) * orig_sigma))) +
+              (orig_sigma * torch.exp(-0.5 * orig_mu**2 / orig_sigma**2) /
+               np.sqrt(2 * math.pi)))
+    new_var = (0.5 * new_mu**2 * torch.erfc(orig_mu /
+                                            (np.sqrt(2) * orig_sigma)) +
+               (orig_sigma * torch.exp(-0.5 * orig_mu**2 / orig_sigma**2) *
+                (orig_mu - 2 * new_mu) / np.sqrt(2 * math.pi)) +
+               (0.5 * ((new_mu - orig_mu)**2 + orig_sigma**2) *
+                (1 + torch.erf(orig_mu / (np.sqrt(2) * orig_sigma)))))
+    return new_mu, torch.sqrt(new_var)
 
-    @staticmethod
-    def backward(ctx, *dys):
-        device = (torch.device("cuda")
-                  if torch.cuda.is_available() else torch.device("cpu"))
-        dy = [grad for grad in dys]
-        (num_weights_tens, num_activations_tens,
-         *misc_stuff) = ctx.saved_tensors
-        num_weights = num_weights_tens.item()
-        num_activations = num_activations_tens.item()
-        weight_array = misc_stuff[:num_weights]
-        activation_array = misc_stuff[num_weights:(num_activations +
-                                                   num_weights)]
-        # step 1: for every neuron, get mean + sd of that neuron's pre-relu
-        # activation
-        zi_means = []
-        zi_stds = []
-        for act_arr in activation_array:
-            zi_means.append(torch.mean(act_arr, dim=0))
-            zi_stds.append(torch.std(act_arr, dim=0))
 
-        d_frac_on_d_ws = []
+def get_mask_list(h, w, h_out, w_out, kernel_h, kernel_w, padding):
+    """
+    Get list of kernel indices that 'touch' zero-value padding when
+    convolved over an input to produce an output value at (h,w).
+    """
+    if padding == (0, 0):
+        return []
+    else:
+        p_h, p_w = padding
+        to_mask_list = []
+        if h <= p_h:
+            to_mask_list += itertools.product(range(kernel_h - h),
+                                              range(kernel_w))
+        if h_out - h <= p_h:
+            to_mask_list += itertools.product(range(kernel_h - h_out + h),
+                                              range(kernel_w))
+        if w <= p_w:
+            to_mask_list += itertools.product(range(kernel_h),
+                                              range(kernel_w - w))
+        if w_out - w <= p_w:
+            to_mask_list += itertools.product(range(kernel_h),
+                                              range(kernel_w - w_out + w))
+        return to_mask_list
 
-        for k, act_arr in enumerate(activation_array[1:], start=1):
-            wt = weight_array[k - 1]
-            # zi_means[k-1] has shape [n_in]
-            # zi_means[k] has shape [n_out]
-            # wt has shape [n_out, n_in]
-            # all means, stds, etc. will have same shape as wt
-            n_out, n_in = tuple(wt.shape)
-            zi_mean = zi_means[k - 1]
-            zi_std = zi_stds[k - 1]
-            wij_zi_mean = torch.mul(wt, zi_mean)
-            wij_zi_std = torch.abs(torch.mul(wt, zi_std))
-            # regularizing standard deviations
-            first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
-            wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
-                                        torch.tensor(1e-5))
-            first_percentile_zi_std = torch.quantile(zi_std, 0.01)
-            zi_std += torch.maximum(0.1 * first_percentile_zi_std,
-                                    torch.tensor(1e-5))
 
-            zj_means = torch.unsqueeze(zi_means[k], 1)
-            zj_minus_i_mean = torch.mul(wt, zi_mean) - zj_means
-            prev_acts = activation_array[k - 1]
-            # prev_acts has shape [num_samples, n_in]
-            # act_arr has shape [num_samples, n_out]
-            expanded_acts = torch.unsqueeze(act_arr, 2)
-            expanded_prev_acts = torch.unsqueeze(prev_acts, 1)
-            wij_zi_samples = torch.mul(wt, expanded_prev_acts)
-            zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples, dim=0)
-            # regularizing standard deviations
-            first_percentile_zj_minus_i_std = torch.quantile(
-                zj_minus_i_std, 0.01)
-            zj_minus_i_std += torch.maximum(
-                0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
-            # pretty sure this is correct
-            mu_comb, sigma_comb = sensitivity_combine_means_sds(
-                wij_zi_mean, zj_minus_i_mean, wij_zi_std, zj_minus_i_std)
-            c = get_front_constant(wij_zi_mean, zj_minus_i_mean, wij_zi_std,
-                                   zj_minus_i_std, mu_comb, sigma_comb)
-            big_wt_pos, big_wt_neg = pos_neg_factors(mu_comb, sigma_comb)
-            big_wt_deriv = (c / torch.abs(wt)) * torch.where(
-                wt > 0, big_wt_pos, big_wt_neg)
-            small_wt_pos, small_wt_neg = pos_neg_small_weight(
-                zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std)
-            small_wt_deriv = torch.where(wt > 0, small_wt_pos, small_wt_neg)
-            non_zero_deriv = torch.where(
-                torch.abs(wt) > 3e-3, big_wt_deriv, small_wt_deriv)
-            zero_deriv = zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean,
-                                           zj_minus_i_std)
-            d_frac_on_d_w = torch.where(wt == 0, zero_deriv, non_zero_deriv)
-            d_frac_on_d_ws.append(d_frac_on_d_w)
+def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3):
+    """
+    Here, m1 and s1 are mean + stdev of the negative of the convolution
+    result, ignoring the input from the channel in question.
+    They have shape [n_out, n_in, h_out, w_out].
+    m2 and s2 are mean + stdev of the convolution of everything in the
+    filter in question except for the weight in question with the previous
+    channel. (to be calculated using stats for Relu(Gaussian) + paper
+    notes)
+    They have shape [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
+    m3 and s3 are mean + stdev of the specific weight in question
+    multiplied by previous channel activations.
+    They have shape [n_out, n_in, kernel_h, kernel_w]
+    w is the specific weight in question. It has shape
+    [n_out, n_in, kernel_h, kernel_w]
+    The result will have shape
+    [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
+    """
+    w_ = w[:, :, :, :, None, None]
+    m1_ = m1[:, :, None, None, :, :]
+    s1_ = s1[:, :, None, None, :, :]
+    m3_ = m3[:, :, :, :, None, None]
+    s3_ = s3[:, :, :, :, None, None]
 
-        props_on = [
-            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
-            for act_tens in activation_array
-        ]
-        new_grads = []
-        for (i, wt_i) in enumerate(weight_array):
-            if i != len(weight_array) - 1:
-                p_on = props_on[i + 1]
-                # p_on has shape [n_out]
-                d_frac_on_d_w = d_frac_on_d_ws[i]
-                # d_frac_on_d_w has shape [n_out, n_in]
-                expanded_p_on = torch.unsqueeze(p_on, 1)
-                # dy[i] has shape [n_out, n_in]
-                term_1 = torch.mul(dy[i], expanded_p_on)
-                grad_w_contract = torch.sum(torch.mul(dy[i], wt_i),
-                                            dim=1,
-                                            keepdim=True)
-                term_2 = torch.mul(grad_w_contract, d_frac_on_d_w)
-                new_grad = (term_1 + term_2).to(device)
-                new_grads.append(new_grad)
-            else:
-                new_grads.append(dy[i])
-                # if wt_i didn't make it to the sensitivity graph,
-                # you'd append [None].
+    s = np.sqrt(2) * s3_ * torch.sqrt(
+        (s1_**2 + s2**2) * (s1_**2 + s2**2 + s3_**2))
+    m = m3_ * (s1_**2 + s2**2) + (m1_ - m2) * s3_**2
+    pre_factor = 1 / (2 * np.sqrt(2) * math.pi *
+                      (s1_**2 + s2**2 + s3_**2)**1.5)
+    whole_pre_factor = (pre_factor * torch.exp(-0.5 * (m1_ - m2)**2 /
+                                               (s1_**2 + s2**2)) *
+                        torch.exp(-0.5 * m3_**2 / s3_**2))
+    pm = torch.ones(w_.shape)
+    pm[w_ < 0] = -1
+    inner_factor = s + (np.exp(
+        (m / s)**2) * np.sqrt(math.pi) * m * (scipy.special.erf(m / s) + pm))
+    return whole_pre_factor * inner_factor / w_
 
-        return tuple([None] + new_grads)
+
+def analytic_cnn_gradient_near_0(m1, s1, m2, s2, m3, s3):
+    """
+    Here, ms and ss are the same as in analytic_cnn_gradient_far_from_0,
+    except that m3 and s3 are mean + stdev of previous channel activations,
+    having shape [n_in]
+    """
+    m1_ = m1[:, :, None, None, :, :]
+    s1_ = s1[:, :, None, None, :, :]
+    m3_ = m3[None, :, None, None, None, None]
+    s3_ = s3[None, :, None, None, None, None]
+
+    exponand12 = -0.5 * (m1_ - m2)**2 / (s1_**2 + s2**2)
+    pre_fac = (torch.exp(exponand12) /
+               (2 * np.sqrt(2) * math.pi * torch.sqrt(s1_**2 + s2**2)))
+    inner_part = ((np.sqrt(math.pi) * m3_ *
+                   (1 + torch.erf(m3_ / (np.sqrt(2) * s3_)))) +
+                  (np.sqrt(2) * s3_ * torch.exp(-0.5 * m3_**2 / s3_**2)))
+    return pre_fac * inner_part
+
+
+def dims_to_collapse_acts(act_tens):
+    if len(act_tens.shape) == 2:
+        return [0]
+    elif len(act_tens.shape) == 4:
+        return [0, 2, 3]
+    else:
+        confuse_string = ("I don't understand the shape of this activation" +
+                          " tensor")
+        assert False, confuse_string

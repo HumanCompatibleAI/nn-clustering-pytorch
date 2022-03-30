@@ -170,7 +170,16 @@ def module_array_to_clust_grad_input(weight_modules, net_type, use_sensitivity,
             tensor_array.append(bn_mod.running_var)
             tensor_type_array.append('bn_running_var')
     if use_sensitivity:
-        tensor_array = MakeSensitivityGraph.apply(acts_list, *tensor_array)
+        # Sensitivity graph needs to know padding of conv modules
+        tensor_data_array = []
+        for i, tens_type in enumerate(tensor_type_array):
+            data_dict = {'type': tens_type}
+            if tens_type == 'conv_mod':
+                conv_mod = tensor_array[i]
+                data_dict['padding'] = conv_mod.padding
+            tensor_data_array.append(data_dict)
+        tensor_array = MakeSensitivityGraph.apply(acts_list, tensor_data_array,
+                                                  *tensor_array)
     return tensor_array, tensor_type_array
 
 
