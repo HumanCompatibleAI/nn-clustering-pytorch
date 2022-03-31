@@ -551,7 +551,8 @@ class MakeSensitivityGraph(Function):
             d_frac_on_d_ws.append(d_frac_on_d_w)
 
         props_on = [
-            torch.mean(0.5 * (torch.sign(act_tens) - 1), dim=0)
+            torch.mean(0.5 * (torch.sign(act_tens) - 1),
+                       dim=dims_to_collapse_acts(act_tens))
             for act_tens in activation_array
         ]
         new_grads = []
