@@ -22,10 +22,10 @@ def compute_percentile(x, arr):
     return r / n
 
 
-def get_weight_modules_from_live_net(network):
+def get_clust_grad_modules_from_live_net(network):
     """
-    Takes a neural network, and gets modules in it that contain relevant
-    weights.
+    Takes a neural network, and gets modules in it that are relevant for
+    calculating the clusterability gradient
     network: a neural network. Has to inherit from nn.Module.
     returns: an array of dicts containing layer names and relevant pytorch
              modules
@@ -42,6 +42,8 @@ def get_weight_modules_from_live_net(network):
                 if (isinstance(module, torch.nn.BatchNorm2d)
                         or isinstance(module, torch.nn.BatchNorm1d)):
                     layer_dict['bn_mod'] = module
+                if isinstance(module, torch.nn.MaxPool2d):
+                    layer_dict['mp_mod'] = module
             if len(layer_dict) > 1:
                 layer_array.append(layer_dict)
         elif isinstance(layer_mod, torch.nn.Sequential):
@@ -60,6 +62,8 @@ def get_weight_modules_from_live_net(network):
                 if (isinstance(module, torch.nn.BatchNorm2d)
                         or isinstance(module, torch.nn.BatchNorm1d)):
                     sequential_array[-1]['bn_mod'] = module
+                if isinstance(module, torch.nn.MaxPool2d):
+                    sequential_array[-1]['mp_mod'] = module
             layer_array += sequential_array
     check_layer_names(layer_array)
     return layer_array

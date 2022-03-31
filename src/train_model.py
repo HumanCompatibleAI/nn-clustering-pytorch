@@ -17,7 +17,7 @@ from networks import CNN_DICT, MLP_DICT, CachingNet
 from utils import (
     calc_arg_deps,
     calc_neuron_sparsity,
-    get_weight_modules_from_live_net,
+    get_clust_grad_modules_from_live_net,
     size_and_multiply_np,
     size_sqrt_divide_np,
     vector_stretch,
@@ -159,9 +159,23 @@ def module_array_to_clust_grad_input(weight_modules, net_type, use_sensitivity,
             weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
             break
 
+    if use_sensitivity:
+        # Sensitivity graph needs to know padding of conv modules
+        tensor_data_array = []
+
     for layer_dict in weight_layers:
-        tensor_array.append(layer_dict[weight_module_name].weight)
+        weight_mod = layer_dict[weight_module_name]
+        tensor_array.append(weight_mod.weight)
         tensor_type_array.append(weight_name)
+        data_dict = {'type': weight_name}
+        if weight_name == 'conv_weights':
+            data_dict['padding'] = weight_mod.padding
+        if 'mp_mod' in layer_dict:
+            # in nets with batch norm, the batch norm is applied before
+            # maxpool, so should probably modify this
+            data_dict['maxpool'] = layer_dict['mp_mod']
+        if use_sensitivity:
+            tensor_data_array.append(data_dict)
         if 'bn_mod' in layer_dict:
             bn_mod = layer_dict['bn_mod']
             if hasattr(bn_mod, 'weight') and bn_mod.weight is not None:
@@ -169,15 +183,8 @@ def module_array_to_clust_grad_input(weight_modules, net_type, use_sensitivity,
                 tensor_type_array.append('bn_weights')
             tensor_array.append(bn_mod.running_var)
             tensor_type_array.append('bn_running_var')
+
     if use_sensitivity:
-        # Sensitivity graph needs to know padding of conv modules
-        tensor_data_array = []
-        for i, tens_type in enumerate(tensor_type_array):
-            data_dict = {'type': tens_type}
-            if tens_type == 'conv_mod':
-                conv_mod = tensor_array[i]
-                data_dict['padding'] = conv_mod.padding
-            tensor_data_array.append(data_dict)
         tensor_array = MakeSensitivityGraph.apply(acts_list, tensor_data_array,
                                                   *tensor_array)
     return tensor_array, tensor_type_array
@@ -201,7 +208,7 @@ def calculate_clust_reg(cluster_gradient_config, net_type, network):
     num_eigs = cluster_gradient_config['num_eigs']
     cg_lambda = cluster_gradient_config['lambda']
     use_sensitivity = cluster_gradient_config['use_sensitivity']
-    weight_modules = get_weight_modules_from_live_net(network)
+    weight_modules = get_clust_grad_modules_from_live_net(network)
     acts = network.activations
     tensor_arrays = module_array_to_clust_grad_input(weight_modules, net_type,
                                                      use_sensitivity, acts)
@@ -223,7 +230,7 @@ def normalize_weights(network, eps=1e-3):
     eps: a float that should be small relative to sqrt(2), to add stability.
     returns nothing: just modifies the network in-place
     """
-    layers = get_weight_modules_from_live_net(network)
+    layers = get_clust_grad_modules_from_live_net(network)
     for idx in range(len(layers) - 1):
         this_layer = layers[idx]
         next_layer = layers[idx + 1]

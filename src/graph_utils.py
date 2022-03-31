@@ -423,8 +423,8 @@ class MakeSensitivityGraph(Function):
                 n_out, n_in, kernel_h, kernel_w = wt.shape
                 zi_mean = zi_means[k - 1]
                 zi_std = zi_stds[k - 1]
-                zi_mean_avgd = torch.mean(zi_mean, dims=[1, 2])
-                zi_std_avgd = torch.mean(zi_std, dims=[1, 2])
+                zi_mean_avgd = torch.mean(zi_mean, dim=[1, 2])
+                zi_std_avgd = torch.mean(zi_std, dim=[1, 2])
                 # for wij_zi stats, take mean over h and w, and have the shape
                 # be [out_channels, in_channels, kernel_h, kernel_w]
                 wij_zi_mean = wt * zi_mean_avgd[:, None, None]
@@ -449,6 +449,14 @@ class MakeSensitivityGraph(Function):
                     torch.nn.functional.relu(prev_acts),
                     split_size_or_sections=1,
                     dim=1)
+                # if the previous layer applied max pool, that's at index k-2
+                if k - 2 >= 0:
+                    if 'maxpool' in tensor_data_array[k - 2]:
+                        maxpool_mod = tensor_data_array[k - 2]['maxpool']
+                        prev_acts_slices = [
+                            maxpool_mod(act_slice)
+                            for act_slice in prev_acts_slices
+                        ]
                 # each prev_acts_slice has shape [num_samples, 1, h_in, w_in]
                 # the weight we're using is at index k-1
                 padding = tensor_data_array[k - 1]['padding']
@@ -504,9 +512,9 @@ class MakeSensitivityGraph(Function):
                         for k_h_, k_w_ in to_mask_list:
                             mask_tens[:, :, k_h_, k_w_] = False
                         sub_sum_w[:, :, h, w] = torch.sum(mask_tens * wt,
-                                                          dims=[2, 3])
+                                                          dim=[2, 3])
                         sub_sum_w2[:, :, h, w] = torch.sum(mask_tens * wt**2,
-                                                           dims=[2, 3])
+                                                           dim=[2, 3])
                     sum_ws[:, :, k_h, k_w, :, :] = sub_sum_w
                     sum_w2s[:, :, k_h, k_w, :, :] = sub_sum_w2
                 conv_minus_kh_kw_mean = sum_ws * zi_mean_trunc[None, :, None,
@@ -530,7 +538,8 @@ class MakeSensitivityGraph(Function):
                     zj_minus_i_mean, zj_minus_i_std, conv_minus_kh_kw_mean,
                     conv_minus_kh_kw_std, zi_mean_avgd, zi_std_avgd)
                 d_frac_on_h_w_d_w = torch.where(
-                    torch.abs(wt) > 3e-3, far_from_0_grad, near_0_grad)
+                    torch.abs(wt[:, :, :, :, None, None]) > 3e-3,
+                    far_from_0_grad, near_0_grad)
                 # above has shape
                 # [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
                 d_frac_on_d_w = torch.mean(d_frac_on_h_w_d_w, dim=[4, 5])
@@ -694,8 +703,9 @@ def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3):
                         torch.exp(-0.5 * m3_**2 / s3_**2))
     pm = torch.ones(w_.shape)
     pm[w_ < 0] = -1
-    inner_factor = s + (np.exp(
-        (m / s)**2) * np.sqrt(math.pi) * m * (scipy.special.erf(m / s) + pm))
+    ms_exponand = torch.minimum((m / s)**2, torch.tensor(30))
+    inner_factor = s + (np.exp(ms_exponand) * np.sqrt(math.pi) * m *
+                        (scipy.special.erf(m / s) + pm))
     return whole_pre_factor * inner_factor / w_
 
 
