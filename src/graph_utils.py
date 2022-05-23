@@ -3,7 +3,6 @@ import math
 
 import numpy as np
 import scipy.sparse as sparse
-import scipy.special
 import torch
 from torch.autograd import Function
 
@@ -495,16 +494,28 @@ class MakeSensitivityGraph(Function):
                     zi_mean_avgd, zi_std_avgd)
                 # these each have dimension [n_in]
                 _, h_out, w_out = zj_mean.shape
-                sum_ws = torch.zeros(n_out, n_in, kernel_h, kernel_w, h_out,
-                                     w_out)
-                sum_w2s = torch.zeros(n_out, n_in, kernel_h, kernel_w, h_out,
-                                      w_out)
+                sum_ws = torch.zeros(n_out,
+                                     n_in,
+                                     kernel_h,
+                                     kernel_w,
+                                     h_out,
+                                     w_out,
+                                     device=device)
+                sum_w2s = torch.zeros(n_out,
+                                      n_in,
+                                      kernel_h,
+                                      kernel_w,
+                                      h_out,
+                                      w_out,
+                                      device=device)
                 for k_h, k_w in itertools.product(range(kernel_h),
                                                   range(kernel_w)):
                     sub_sum_w = torch.zeros(n_out, n_in, h_out, w_out)
                     sub_sum_w2 = torch.zeros(n_out, n_in, h_out, w_out)
                     for h, w in itertools.product(range(h_out), range(w_out)):
-                        mask_tens = torch.ones(wt.shape, dtype=torch.bool)
+                        mask_tens = torch.ones(wt.shape,
+                                               dtype=torch.bool,
+                                               device=device)
                         mask_tens[:, :, k_h, k_w] = False
                         to_mask_list = get_mask_list(h, w, h_out, w_out,
                                                      kernel_h, kernel_w,
@@ -533,7 +544,7 @@ class MakeSensitivityGraph(Function):
                 # Now: just got to put all these together.
                 far_from_0_grad = analytic_cnn_gradient_far_from_0(
                     wt, zj_minus_i_mean, zj_minus_i_std, conv_minus_kh_kw_mean,
-                    conv_minus_kh_kw_std, wij_zi_mean, wij_zi_std)
+                    conv_minus_kh_kw_std, wij_zi_mean, wij_zi_std, device)
                 near_0_grad = analytic_cnn_gradient_near_0(
                     zj_minus_i_mean, zj_minus_i_std, conv_minus_kh_kw_mean,
                     conv_minus_kh_kw_std, zi_mean_avgd, zi_std_avgd)
@@ -670,7 +681,7 @@ def get_mask_list(h, w, h_out, w_out, kernel_h, kernel_w, padding):
         return to_mask_list
 
 
-def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3):
+def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3, device):
     """
     Here, m1 and s1 are mean + stdev of the negative of the convolution
     result, ignoring the input from the channel in question.
@@ -702,11 +713,11 @@ def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3):
     whole_pre_factor = (pre_factor * torch.exp(-0.5 * (m1_ - m2)**2 /
                                                (s1_**2 + s2**2)) *
                         torch.exp(-0.5 * m3_**2 / s3_**2))
-    pm = torch.ones(w_.shape)
+    pm = torch.ones(w_.shape, device=device)
     pm[w_ < 0] = -1
     ms_exponand = torch.minimum((m / s)**2, torch.tensor(30))
-    inner_factor = s + (np.exp(ms_exponand) * np.sqrt(math.pi) * m *
-                        (scipy.special.erf(m / s) + pm))
+    inner_factor = s + (torch.exp(ms_exponand) * np.sqrt(math.pi) * m *
+                        (torch.erf(m / s) + pm))
     return whole_pre_factor * inner_factor / w_
 
 
