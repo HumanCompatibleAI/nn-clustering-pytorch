@@ -732,7 +732,8 @@ def analytic_cnn_gradient_near_0(m1, s1, m2, s2, m3, s3):
     m3_ = m3[None, :, None, None, None, None]
     s3_ = s3[None, :, None, None, None, None]
 
-    exponand12 = -0.5 * (m1_ - m2)**2 / (s1_**2 + s2**2)
+    exponand12_ = -0.5 * (m1_ - m2)**2 / (s1_**2 + s2**2)
+    exponand12 = torch.minimum(exponand12_, torch.tensor(30))
     pre_fac = (torch.exp(exponand12) /
                (2 * np.sqrt(2) * math.pi * torch.sqrt(s1_**2 + s2**2)))
     inner_part = ((np.sqrt(math.pi) * m3_ *
