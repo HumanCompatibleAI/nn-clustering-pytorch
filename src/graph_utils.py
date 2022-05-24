@@ -492,7 +492,7 @@ class MakeSensitivityGraph(Function):
                 # Next, get means and standard deviations of product of
                 # convolution, ignoring the weight in question.
                 zi_mean_trunc, zi_std_trunc = relu_normal_stats_torch(
-                    zi_mean_avgd, zi_std_avgd)
+                    zi_mean_avgd, zi_std_avgd, device)
                 # these each have dimension [n_in]
                 _, h_out, w_out = zj_mean.shape
                 sum_ws = torch.zeros(n_out,
@@ -586,6 +586,7 @@ class MakeSensitivityGraph(Function):
                                             keepdim=True)
                 term_2 = grad_w_contract * d_frac_on_d_w
                 new_grad = (term_1 + term_2).to(device)
+                assert not torch.any(torch.isnan(new_grad))
                 new_grads.append(new_grad)
             else:
                 new_grads.append(dy[i])
@@ -638,7 +639,7 @@ def zero_weight_deriv(zi_mean, zi_std, zj_minus_i_mean, zj_minus_i_std):
     return result
 
 
-def relu_normal_stats_torch(orig_mu, orig_sigma):
+def relu_normal_stats_torch(orig_mu, orig_sigma, device):
     """
     If a normal random variable has mean orig_mu and orig_sigma, this
     function computes the mean and standard deviation of the ReLU of that
@@ -648,13 +649,16 @@ def relu_normal_stats_torch(orig_mu, orig_sigma):
                                              (np.sqrt(2) * orig_sigma))) +
               (orig_sigma * torch.exp(-0.5 * orig_mu**2 / orig_sigma**2) /
                np.sqrt(2 * math.pi)))
-    new_var = (0.5 * new_mu**2 * torch.erfc(orig_mu /
-                                            (np.sqrt(2) * orig_sigma)) +
-               (orig_sigma * torch.exp(-0.5 * orig_mu**2 / orig_sigma**2) *
-                (orig_mu - 2 * new_mu) / np.sqrt(2 * math.pi)) +
-               (0.5 * ((new_mu - orig_mu)**2 + orig_sigma**2) *
-                (1 + torch.erf(orig_mu / (np.sqrt(2) * orig_sigma)))))
-    return new_mu, torch.sqrt(new_var)
+
+    term1 = 0.5 * new_mu**2 * torch.erfc(orig_mu / (np.sqrt(2) * orig_sigma))
+    term2 = (orig_sigma * torch.exp(-0.5 * orig_mu**2 / orig_sigma**2) *
+             (orig_mu - 2 * new_mu) / np.sqrt(2 * math.pi))
+    term3 = (0.5 * ((new_mu - orig_mu)**2 + orig_sigma**2) *
+             (1 + torch.erf(orig_mu / (np.sqrt(2) * orig_sigma))))
+    new_var = (term1 + term2 + term3)
+    my_zeros = torch.zeros(new_var.shape, device=device)
+    new_sigma = torch.where(new_var > 0, torch.sqrt(new_var), my_zeros)
+    return new_mu, new_sigma
 
 
 def get_mask_list(h, w, h_out, w_out, kernel_h, kernel_w, padding):
@@ -720,7 +724,8 @@ def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3, device):
     ms_exponand = torch.minimum((m / s)**2, torch.tensor(30))
     inner_factor = s + (torch.exp(ms_exponand) * np.sqrt(math.pi) * m *
                         (torch.erf(m / s) + pm))
-    return whole_pre_factor * inner_factor / w_
+    grad = whole_pre_factor * inner_factor / w_
+    return grad
 
 
 def analytic_cnn_gradient_near_0(m1, s1, m2, s2, m3, s3):
