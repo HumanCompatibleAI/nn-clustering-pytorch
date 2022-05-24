@@ -298,8 +298,7 @@ class MakeSensitivityGraph(Function):
     Takes a network, and returns new 'weights' that represent the average
     partial derivative of each activation with respect to each previous layer
     activation.
-    Currently assuming the network is an MLP, implement CNNs later.
-    Also currently ignoring that batchnorm exists.
+    Currently ignoring that batchnorm exists.
     TODO: set epsilon
     """
     @staticmethod
@@ -319,15 +318,17 @@ class MakeSensitivityGraph(Function):
                        dim=dims_to_collapse_acts(act_tens))
             for act_tens in activation_array
         ]
+        is_cnn = len(activation_array[0].shape) == 4
         sensitivities = []
         for (i, wt_tens) in enumerate(weight_array):
-            if i != len(weight_array) - 1:
+            if i != len(weight_array) - 1 or is_cnn:
                 prop_vec = props_on[i + 1]  # skip the input activations
                 for j in range(prop_vec.ndim, wt_tens.ndim):
                     prop_vec = torch.unsqueeze(prop_vec, j)
                 new_wt = torch.mul(wt_tens, prop_vec)
                 sensitivities.append(torch.abs(new_wt))
             else:
+                # for MLPs, final layer doesn't have a ReLU after it.
                 sensitivities.append(torch.abs(wt_tens))
         ctx.num_weights = num_weights
         ctx.num_activations = num_activations
@@ -470,7 +471,7 @@ class MakeSensitivityGraph(Function):
                 # wij_conv_relu_zi has length n_in
                 # each entry has shape [num_samples, n_out, h_out, w_out]
                 zj_minus_i_mean_ = torch.stack([
-                    torch.mean(conv_product, dim=0) - zj_mean
+                    torch.mean(conv_product - zj_mean, dim=0)
                     for conv_product in wij_conv_relu_zi
                 ],
                                                dim=0)
@@ -568,7 +569,7 @@ class MakeSensitivityGraph(Function):
         ]
         new_grads = []
         for (i, wt_i) in enumerate(weight_array):
-            if i != len(weight_array) - 1:
+            if i != len(weight_array) - 1 or len(wt_i.shape) == 4:
                 p_on = props_on[i + 1]
                 # p_on has shape [n_out]
                 d_frac_on_d_w = d_frac_on_d_ws[i]
@@ -710,8 +711,9 @@ def analytic_cnn_gradient_far_from_0(w, m1, s1, m2, s2, m3, s3, device):
     m = m3_ * (s1_**2 + s2**2) + (m1_ - m2) * s3_**2
     pre_factor = 1 / (2 * np.sqrt(2) * math.pi *
                       (s1_**2 + s2**2 + s3_**2)**1.5)
-    whole_pre_factor = (pre_factor * torch.exp(-0.5 * (m1_ - m2)**2 /
-                                               (s1_**2 + s2**2)) *
+    exponand12_ = -0.5 * (m1_ - m2)**2 / (s1_**2 + s2**2)
+    exponand12 = torch.minimum(exponand12_, torch.tensor(30))
+    whole_pre_factor = (pre_factor * torch.exp(exponand12) *
                         torch.exp(-0.5 * m3_**2 / s3_**2))
     pm = torch.ones(w_.shape, device=device)
     pm[w_ < 0] = -1
@@ -734,12 +736,15 @@ def analytic_cnn_gradient_near_0(m1, s1, m2, s2, m3, s3):
 
     exponand12_ = -0.5 * (m1_ - m2)**2 / (s1_**2 + s2**2)
     exponand12 = torch.minimum(exponand12_, torch.tensor(30))
+    exponand3_ = -0.5 * m3_**2 / s3_**2
+    exponand3 = torch.minimum(exponand3_, torch.tensor(30))
     pre_fac = (torch.exp(exponand12) /
                (2 * np.sqrt(2) * math.pi * torch.sqrt(s1_**2 + s2**2)))
     inner_part = ((np.sqrt(math.pi) * m3_ *
                    (1 + torch.erf(m3_ / (np.sqrt(2) * s3_)))) +
-                  (np.sqrt(2) * s3_ * torch.exp(-0.5 * m3_**2 / s3_**2)))
-    return pre_fac * inner_part
+                  (np.sqrt(2) * s3_ * torch.exp(exponand3)))
+    grad = pre_fac * inner_part
+    return grad
 
 
 def dims_to_collapse_acts(act_tens):
