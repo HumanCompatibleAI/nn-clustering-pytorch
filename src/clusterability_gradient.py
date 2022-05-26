@@ -222,155 +222,183 @@ class LaplacianEigenvalues(Function):
             tensor_type_array, np_tensor_array, net_type)
         num_layers = len(w_tens_np_array)
         adj_mat_csr = weights_to_graph(w_tens_np_array)
-        (thin_w_array, thin_adj_mat, del_rows, del_cols,
-         _) = delete_isolated_ccs(w_tens_np_array, adj_mat_csr)
-        assert len(del_rows) == num_layers
-        assert len(del_cols) == num_layers
-        assert len(thin_w_array) == num_layers
-        lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
-        evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, which='SM')
-        evecs = np.transpose(evecs)
-        # ^ makes evecs (num eigenvals) * (size of lap mat)
-        outers = []
-        for i in range(num_eigs):
-            outers.append(np.outer(evecs[i + 1], evecs[i + 1]))
-        ctx.num_workers = num_workers
-        ctx.net_type = net_type
-        ctx.degree_vec = degree_vec
-        ctx.thin_w_np_array = thin_w_array
-        ctx.del_rows = del_rows
-        ctx.del_cols = del_cols
-        ctx.outers = outers
-        ctx.tensor_types = tensor_type_array
-        ctx.save_for_backward(*args)
-        return torch.from_numpy(evals[1:])
+        deleted_isolated_ccs = delete_isolated_ccs(w_tens_np_array,
+                                                   adj_mat_csr)
+        if deleted_isolated_ccs is None:
+            # the neural network isn't connected from start to end, it doesn't
+            # make sense to regularize any more.
+            # it would probably be better to add a bit to every weight and then
+            # continue, but that's harder.
+            ctx.fully_connected = False
+            ctx.num_inputs = len(np_tensor_array)
+            return torch.zeros(num_eigs)
+        else:
+            ctx.fully_connected = True
+            (thin_w_array, thin_adj_mat, del_rows, del_cols,
+             _) = deleted_isolated_ccs
+            assert len(del_rows) == num_layers
+            assert len(del_cols) == num_layers
+            assert len(thin_w_array) == num_layers
+            lap_mat_csr, degree_vec = adj_to_laplacian_and_degs(thin_adj_mat)
+            evals, evecs = eigsh(lap_mat_csr, num_eigs + 1, which='SM')
+            evecs = np.transpose(evecs)
+            # ^ makes evecs (num eigenvals) * (size of lap mat)
+            outers = []
+            for i in range(num_eigs):
+                outers.append(np.outer(evecs[i + 1], evecs[i + 1]))
+            ctx.num_workers = num_workers
+            ctx.net_type = net_type
+            ctx.degree_vec = degree_vec
+            ctx.thin_w_np_array = thin_w_array
+            ctx.del_rows = del_rows
+            ctx.del_cols = del_cols
+            ctx.outers = outers
+            ctx.tensor_types = tensor_type_array
+            ctx.save_for_backward(*args)
+            return torch.from_numpy(evals[1:])
 
     @staticmethod
     def backward(ctx, dy):
         # NB: this is a possibly sketchy way of selecting the device
         device = (torch.device("cuda")
                   if torch.cuda.is_available() else torch.device("cpu"))
-        # recover saved tensors
-        num_workers = ctx.num_workers
-        net_type = ctx.net_type
-        assert net_type in ['mlp', 'cnn']
-        degree_vec = ctx.degree_vec
-        thin_w_np_array = ctx.thin_w_np_array
-        del_rows = ctx.del_rows
-        del_cols = ctx.del_cols
-        outers = ctx.outers
-        tensor_types = ctx.tensor_types
-        tens_array = ctx.saved_tensors
-        # keeping this in case del_rows and del_cols actually have to be lists
-        # del_rows = [
-        #     entry.detach().cpu().numpy().tolist() for entry in del_rows_tens
-        # ]
-        # del_cols = [
-        #     entry.detach().cpu().numpy().tolist() for entry in del_cols_tens
-        # ]
-        np_tens_array = [tens.detach().cpu().numpy() for tens in tens_array]
+        if not ctx.fully_connected:
+            # network isn't connected end-to-end, don't bother with gradients
+            num_inputs = ctx.num_inputs
+            return tuple([None] * (4 + num_inputs))
+        else:
+            # recover saved tensors
+            num_workers = ctx.num_workers
+            net_type = ctx.net_type
+            assert net_type in ['mlp', 'cnn']
+            degree_vec = ctx.degree_vec
+            thin_w_np_array = ctx.thin_w_np_array
+            del_rows = ctx.del_rows
+            del_cols = ctx.del_cols
+            outers = ctx.outers
+            tensor_types = ctx.tensor_types
+            tens_array = ctx.saved_tensors
+            # keeping this in case del_rows and del_cols actually have to be
+            # lists
+            # del_rows = [
+            #     entry.detach().cpu().numpy().tolist()
+            #     for entry in del_rows_tens
+            # ]
+            # del_cols = [
+            #     entry.detach().cpu().numpy().tolist()
+            #     for entry in del_cols_tens
+            # ]
+            np_tens_array = [
+                tens.detach().cpu().numpy() for tens in tens_array
+            ]
 
-        # calculate gradient wrt 'thin tensors' (post deletion of isolated ccs)
-        # this is where the bulk of the calculation is done!
-        dy_dL = np.tensordot(dy, outers, [[0], [0]])
-        penult_grad = get_dy_dW_np(degree_vec, thin_w_np_array, dy_dL,
-                                   num_workers)
-        assert len(del_rows) == len(del_cols)
-        penult_len = "penult_grad different length than expected"
-        assert len(penult_grad) == len(del_rows), penult_len
-        # calculate gradient wrt 'layer tensors'
-        fat_grads = []
-        for (i, grad) in enumerate(penult_grad):
-            fat_grad = invert_deleted_neurons_np(grad, del_rows[i],
-                                                 del_cols[i])
-            # fat_grads.append(torch.from_numpy(fat_grad).to(device))
-            fat_grads.append(fat_grad)
-        # calculate gradient wrt all input tensors
-        # basically, go thru tensor_types. if you correspond to just a
-        # weight matrix, then you stay put. if you correspond to a weight
-        # matrix + batch norm stuff, then calculate gradients for all of the
-        # stuff.
-        # Note for batch norm: the running variances are a function of the
-        # weights that you're taking the gradient of, so you'd think you'd have
-        # to use the chain rule. But when you work it out, for nets of width n,
-        # this is a factor ~1/n correction, and it's hard to work out, so we'll
-        # just ignore it.
-        # Since here we don't actually know how the weights will update
-        # (that depends on the alg (e.g. SGD vs Adam) and the learning rate)
-        # we won't manually edit the running variance, and will hope that sorts
-        # itself out.
-        final_grad = []
-        weight_name = ('fc_weights' if net_type == 'mlp' else 'conv_weights')
-        grouped_tens_types = []
-        assert tensor_types[0] == weight_name
-        for i, tens_type in enumerate(tensor_types):
-            if tens_type == weight_name:
-                grouped_tens_types.append([weight_name])
-            else:
-                grouped_tens_types[-1].append(tens_type)
-        # grouped_tens_types should look like
-        # [[weight_name], [weight_name], [weight_name, bn_weights,
-        # bn_running_var], [weight_name, bn_running_var], [weight_name]]
-        assert len(grouped_tens_types) == len(fat_grads)
-        # turn gradients into gradients for weights and batch norm stuff
-        # separately.
-        for (i, grad) in enumerate(fat_grads):
-            current_group = grouped_tens_types[i]
-            assert current_group[0] == weight_name
-            if len(current_group) == 1:
-                final_grad.append(torch.from_numpy(grad).to(device))
-            else:
-                np_tens_start_index = sum(
-                    [len(group) for group in grouped_tens_types[:i]])
-                tens_dict = {'weights': np_tens_array[np_tens_start_index]}
-                for j in range(1, len(current_group)):
-                    tens = np_tens_array[np_tens_start_index + j]
-                    if current_group[j] == 'bn_running_var':
-                        tens_dict['bn_running_var'] = tens
-                    if current_group[j] == 'bn_weights':
-                        tens_dict['bn_weights'] = tens
-                assert 'bn_running_var' in tens_dict \
-                    or 'bn_weights' in tens_dict
-                weight_grad = grad
-                if 'bn_weights' in tens_dict:
-                    weight_grad = size_and_multiply_np(tens_dict['bn_weights'],
-                                                       weight_grad)
-                if 'bn_running_var' in tens_dict:
-                    weight_grad = size_sqrt_divide_np(
-                        tens_dict['bn_running_var'], weight_grad)
-                final_grad.append(torch.from_numpy(weight_grad).to(device))
+            # calculate gradient wrt 'thin tensors' (post deletion of isolated
+            # ccs)
+            # this is where the bulk of the calculation is done!
+            dy_dL = np.tensordot(dy, outers, [[0], [0]])
+            penult_grad = get_dy_dW_np(degree_vec, thin_w_np_array, dy_dL,
+                                       num_workers)
+            assert len(del_rows) == len(del_cols)
+            penult_len = "penult_grad different length than expected"
+            assert len(penult_grad) == len(del_rows), penult_len
+            # calculate gradient wrt 'layer tensors'
+            fat_grads = []
+            for (i, grad) in enumerate(penult_grad):
+                fat_grad = invert_deleted_neurons_np(grad, del_rows[i],
+                                                     del_cols[i])
+                # fat_grads.append(torch.from_numpy(fat_grad).to(device))
+                fat_grads.append(fat_grad)
+            # calculate gradient wrt all input tensors
+            # basically, go thru tensor_types. if you correspond to just a
+            # weight matrix, then you stay put. if you correspond to a weight
+            # matrix + batch norm stuff, then calculate gradients for all of
+            # the stuff.
+            # Note for batch norm: the running variances are a function of the
+            # weights that you're taking the gradient of, so you'd think you'd
+            # have to use the chain rule. But when you work it out, for nets of
+            # width n, this is a factor ~1/n correction, and it's hard to work
+            # out, so we'll just ignore it.
+            # Since here we don't actually know how the weights will update
+            # (that depends on the alg (e.g. SGD vs Adam) and the learning
+            # rate) we won't manually edit the running variance, and will hope
+            # that sorts itself out.
+            final_grad = []
+            weight_name = ('fc_weights'
+                           if net_type == 'mlp' else 'conv_weights')
+            grouped_tens_types = []
+            assert tensor_types[0] == weight_name
+            for i, tens_type in enumerate(tensor_types):
+                if tens_type == weight_name:
+                    grouped_tens_types.append([weight_name])
+                else:
+                    grouped_tens_types[-1].append(tens_type)
+            # grouped_tens_types should look like
+            # [[weight_name], [weight_name], [weight_name, bn_weights,
+            # bn_running_var], [weight_name, bn_running_var], [weight_name]]
+            assert len(grouped_tens_types) == len(fat_grads)
+            # turn gradients into gradients for weights and batch norm stuff
+            # separately.
+            for (i, grad) in enumerate(fat_grads):
+                current_group = grouped_tens_types[i]
+                assert current_group[0] == weight_name
+                if len(current_group) == 1:
+                    final_grad.append(torch.from_numpy(grad).to(device))
+                else:
+                    np_tens_start_index = sum(
+                        [len(group) for group in grouped_tens_types[:i]])
+                    tens_dict = {'weights': np_tens_array[np_tens_start_index]}
+                    for j in range(1, len(current_group)):
+                        tens = np_tens_array[np_tens_start_index + j]
+                        if current_group[j] == 'bn_running_var':
+                            tens_dict['bn_running_var'] = tens
+                        if current_group[j] == 'bn_weights':
+                            tens_dict['bn_weights'] = tens
+                    assert 'bn_running_var' in tens_dict \
+                        or 'bn_weights' in tens_dict
+                    weight_grad = grad
+                    if 'bn_weights' in tens_dict:
+                        weight_grad = size_and_multiply_np(
+                            tens_dict['bn_weights'], weight_grad)
+                    if 'bn_running_var' in tens_dict:
+                        weight_grad = size_sqrt_divide_np(
+                            tens_dict['bn_running_var'], weight_grad)
+                    final_grad.append(torch.from_numpy(weight_grad).to(device))
 
-                # add gradients for bn_weights and bn_running_var
-                # bn_running_var gets no gradient.
-                if 'bn_weights' in tens_dict and 'bn_running_var' in tens_dict:
-                    bn_w_grad = size_sqrt_divide_np(
-                        tens_dict['bn_running_var'], grad)
-                    bn_w_grad = np.multiply(bn_w_grad, tens_dict['weights'])
-                    bn_w_grad = np.sum(bn_w_grad,
-                                       tuple(range(1, bn_w_grad.ndim)))
-                    w_index = current_group.index('bn_weights')
-                    v_index = current_group.index('bn_running_var')
-                    assert w_index != v_index
-                    if w_index < v_index:
-                        final_grad.append(
-                            torch.from_numpy(bn_w_grad).to(device))
+                    # add gradients for bn_weights and bn_running_var
+                    # bn_running_var gets no gradient.
+                    if ('bn_weights' in tens_dict
+                            and 'bn_running_var' in tens_dict):
+                        bn_w_grad = size_sqrt_divide_np(
+                            tens_dict['bn_running_var'], grad)
+                        bn_w_grad = np.multiply(bn_w_grad,
+                                                tens_dict['weights'])
+                        bn_w_grad = np.sum(bn_w_grad,
+                                           tuple(range(1, bn_w_grad.ndim)))
+                        w_index = current_group.index('bn_weights')
+                        v_index = current_group.index('bn_running_var')
+                        assert w_index != v_index
+                        if w_index < v_index:
+                            final_grad.append(
+                                torch.from_numpy(bn_w_grad).to(device))
+                            final_grad.append(None)
+                        else:
+                            final_grad.append(None)
+                            final_grad.append(
+                                torch.from_numpy(bn_w_grad).to(device))
+                    elif 'bn_running_var' in tens_dict:
                         final_grad.append(None)
                     else:
-                        final_grad.append(None)
+                        # now tens_dict just has bn_weights
+                        # after writing this code I've realized that this
+                        # should theoretically never happen. But whatever.
+                        bn_w_grad = np.multiply(grad, tens_dict['weights'])
+                        bn_w_grad = np.sum(bn_w_grad,
+                                           tuple(range(1, bn_w_grad.ndim)))
                         final_grad.append(
                             torch.from_numpy(bn_w_grad).to(device))
-                elif 'bn_running_var' in tens_dict:
-                    final_grad.append(None)
-                else:
-                    # now tens_dict just has bn_weights
-                    # after writing this code I've realized that this should
-                    # theoretically never happen. But whatever.
-                    bn_w_grad = np.multiply(grad, tens_dict['weights'])
-                    bn_w_grad = np.sum(bn_w_grad,
-                                       tuple(range(1, bn_w_grad.ndim)))
-                    final_grad.append(torch.from_numpy(bn_w_grad).to(device))
 
-        # finally, gradient for num_workers, num_eigs, net_type, and
-        # tensor_type_array should be None.
-        # because those aren't differentiable, they're more like parameters.
-        return tuple([None, None, None, None] + final_grad)
+            # finally, gradient for num_workers, num_eigs, net_type, and
+            # tensor_type_array should be None.
+            # because those aren't differentiable, they're more like
+            # parameters.
+            return tuple([None, None, None, None] + final_grad)
