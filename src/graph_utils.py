@@ -374,12 +374,8 @@ class MakeSensitivityGraph(Function):
                 wij_zi_mean = torch.mul(wt, zi_mean)
                 wij_zi_std = torch.abs(torch.mul(wt, zi_std))
                 # regularizing standard deviations
-                first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
-                wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
-                                            torch.tensor(1e-5))
-                first_percentile_zi_std = torch.quantile(zi_std, 0.01)
-                zi_std += torch.maximum(0.1 * first_percentile_zi_std,
-                                        torch.tensor(1e-5))
+                wij_zi_std = regularize_stdev(wij_zi_std)
+                zi_std = regularize_stdev(zi_std)
 
                 zj_means = torch.unsqueeze(zi_means[k], 1)
                 prev_acts = activation_array[k - 1]
@@ -392,10 +388,7 @@ class MakeSensitivityGraph(Function):
                 zj_minus_i_std = torch.std(expanded_acts - wij_zi_samples,
                                            dim=0)
                 # regularizing standard deviations
-                first_percentile_zj_minus_i_std = torch.quantile(
-                    zj_minus_i_std, 0.01)
-                zj_minus_i_std += torch.maximum(
-                    0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
+                zj_minus_i_std = regularize_stdev(zj_minus_i_std)
                 # pretty sure this is correct
                 mu_comb, sigma_comb = sensitivity_combine_means_sds(
                     wij_zi_mean, zj_minus_i_mean, wij_zi_std, zj_minus_i_std)
@@ -430,12 +423,8 @@ class MakeSensitivityGraph(Function):
                 wij_zi_mean = wt * zi_mean_avgd[:, None, None]
                 wij_zi_std = torch.abs(wt * zi_std_avgd[:, None, None])
                 # regularizing standard deviations
-                first_percentile_wij_zi_std = torch.quantile(wij_zi_std, 0.01)
-                wij_zi_std += torch.maximum(0.1 * first_percentile_wij_zi_std,
-                                            torch.tensor(1e-5))
-                first_percentile_zi_std = torch.quantile(zi_std, 0.01)
-                zi_std += torch.maximum(0.1 * first_percentile_zi_std,
-                                        torch.tensor(1e-5))
+                wij_zi_std = regularize_stdev(wij_zi_std)
+                zi_std = regularize_stdev(zi_std)
 
                 # Next, get means and standard deviations of -z^{j-i}:
                 # Basically, the contribution of convolving over everything
@@ -483,10 +472,7 @@ class MakeSensitivityGraph(Function):
                 zj_minus_i_mean = torch.transpose(zj_minus_i_mean_, 0, 1)
                 zj_minus_i_std = torch.transpose(zj_minus_i_std_, 0, 1)
                 # regularize standard deviation
-                first_percentile_zj_minus_i_std = torch.quantile(
-                    zj_minus_i_std, 0.01)
-                zj_minus_i_std += torch.maximum(
-                    0.1 * first_percentile_zj_minus_i_std, torch.tensor(1e-5))
+                zj_minus_i_std = regularize_stdev(zj_minus_i_std)
                 # these tensors have shape [n_out, n_in, h_out, w_out]
 
                 # Next, get means and standard deviations of product of
@@ -537,10 +523,7 @@ class MakeSensitivityGraph(Function):
                 # these all have shape
                 # [n_out, n_in, kernel_h, kernel_w, h_out, w_out]
                 # now regularize stdev
-                first_percentile_conv_stdev = torch.quantile(
-                    conv_minus_kh_kw_std, 0.01)
-                conv_minus_kh_kw_std += torch.maximum(
-                    0.1 * first_percentile_conv_stdev, torch.tensor(1e-5))
+                conv_minus_kh_kw_std = regularize_stdev(conv_minus_kh_kw_std)
 
                 # Now: just got to put all these together.
                 far_from_0_grad = analytic_cnn_gradient_far_from_0(
@@ -761,3 +744,14 @@ def dims_to_collapse_acts(act_tens):
         confuse_string = ("I don't understand the shape of this activation" +
                           " tensor")
         assert False, confuse_string
+
+
+def regularize_stdev(tens):
+    """
+    Takes a pytorch tensor (usually a tensor of standard deviations),
+    and adds 0.1 times the first percentile element of that tensor or 1e-5,
+    whichever is larger.
+    """
+    np_tens = tens.detach().cpu().numpy()
+    first_percentile = np.quantile(np_tens, 0.01)
+    return tens + torch.tensor(max(0.1 * first_percentile, 1e-5))
