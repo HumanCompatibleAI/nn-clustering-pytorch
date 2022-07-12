@@ -156,25 +156,33 @@ def module_array_to_clust_grad_input(weight_modules, net_type, use_sensitivity,
 
     for k, g in itertools.groupby(weight_modules, has_weights):
         if k:
-            weight_layers = list(g) if net_type == 'mlp' else list(g)[1:]
+            list_g = list(g)
+            weight_layers = list_g if net_type == 'mlp' else list_g[1:]
+            if net_type != 'mlp':
+                first_layer_dict = list_g[0]
             break
 
     if use_sensitivity:
         # Sensitivity graph needs to know padding of conv modules
         tensor_data_array = []
+        if net_type != 'mlp':
+            # include info about max pool in first layer
+            tensor_data_array.append({})
+            if 'mp_mod' in first_layer_dict:
+                tensor_data_array[0]['maxpool'] = first_layer_dict['mp_mod']
 
     for layer_dict in weight_layers:
         weight_mod = layer_dict[weight_module_name]
         tensor_array.append(weight_mod.weight)
         tensor_type_array.append(weight_name)
-        data_dict = {'type': weight_name}
-        if weight_name == 'conv_weights':
-            data_dict['padding'] = weight_mod.padding
-        if 'mp_mod' in layer_dict:
-            # in nets with batch norm, the batch norm is applied before
-            # maxpool, so should probably modify this
-            data_dict['maxpool'] = layer_dict['mp_mod']
         if use_sensitivity:
+            data_dict = {'type': weight_name}
+            if weight_name == 'conv_weights':
+                data_dict['padding'] = weight_mod.padding
+            if 'mp_mod' in layer_dict:
+                # in nets with batch norm, the batch norm is applied before
+                # maxpool, so should probably modify this
+                data_dict['maxpool'] = layer_dict['mp_mod']
             tensor_data_array.append(data_dict)
         if 'bn_mod' in layer_dict:
             bn_mod = layer_dict['bn_mod']

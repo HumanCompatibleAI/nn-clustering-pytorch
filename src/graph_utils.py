@@ -307,7 +307,6 @@ class MakeSensitivityGraph(Function):
         # apply this func to what's in that
         weight_array = [wt for wt in args]
         num_weights = len(weight_array)
-        assert len(tensor_data_array) == num_weights
         num_activations = len(activation_array)
         # remember, dimension 0 of activations is batch,
         # dim 1 is neuron/channel,
@@ -319,6 +318,8 @@ class MakeSensitivityGraph(Function):
             for act_tens in activation_array
         ]
         is_cnn = len(activation_array[0].shape) == 4
+        assert len(
+            tensor_data_array) == num_weights + 1 if is_cnn else num_weights
         sensitivities = []
         for (i, wt_tens) in enumerate(weight_array):
             if i != len(weight_array) - 1 or is_cnn:
@@ -346,9 +347,11 @@ class MakeSensitivityGraph(Function):
         tensor_data_array = ctx.tensor_data_array
         misc_stuff = ctx.saved_tensors
         weight_array = misc_stuff[:num_weights]
-        assert len(weight_array) == len(tensor_data_array)
         activation_array = misc_stuff[num_weights:(num_activations +
                                                    num_weights)]
+        is_cnn = len(activation_array[0].shape) == 4
+        assert len(tensor_data_array) == (len(weight_array) +
+                                          1 if is_cnn else len(weight_array))
         # step 1: for every neuron, get mean + sd of that neuron's pre-relu
         # activation
         zi_means = []
@@ -361,6 +364,7 @@ class MakeSensitivityGraph(Function):
         d_frac_on_d_ws = []
 
         for k, act_arr in enumerate(activation_array[1:], start=1):
+            # remember, k indexes the activation array
             wt = weight_array[k - 1]
             # i means in_neuron/channel, j means out_neuron/channel
             if len(wt.shape) == 2:
@@ -410,6 +414,8 @@ class MakeSensitivityGraph(Function):
                                             non_zero_deriv)
             elif len(wt.shape) == 4:
                 # remember: j is out, i is in.
+                # also remember: k indexes the activation array
+                # wt = weight_array[k - 1]
                 # zi_means[k-1] has shape [n_in, h_in, w_in]
                 # zi_means[k] has shape[n_out, h_out, w_out]
                 # wt has shape [n_out, n_in, kernel_h, kernel_w]
@@ -438,17 +444,16 @@ class MakeSensitivityGraph(Function):
                     torch.nn.functional.relu(prev_acts),
                     split_size_or_sections=1,
                     dim=1)
-                # if the previous layer applied max pool, that's at index k-2
-                if k - 2 >= 0:
-                    if 'maxpool' in tensor_data_array[k - 2]:
-                        maxpool_mod = tensor_data_array[k - 2]['maxpool']
-                        prev_acts_slices = [
-                            maxpool_mod(act_slice)
-                            for act_slice in prev_acts_slices
-                        ]
+                # if the previous layer applied max pool, that's at index k-1
+                if 'maxpool' in tensor_data_array[k - 1]:
+                    maxpool_mod = tensor_data_array[k - 1]['maxpool']
+                    prev_acts_slices = [
+                        maxpool_mod(act_slice)
+                        for act_slice in prev_acts_slices
+                    ]
                 # each prev_acts_slice has shape [num_samples, 1, h_in, w_in]
-                # the weight we're using is at index k-1
-                padding = tensor_data_array[k - 1]['padding']
+                # the weight we're using is at index k
+                padding = tensor_data_array[k]['padding']
                 wij_conv_relu_zi = []
                 assert len(wt_slices) == len(prev_acts_slices)
                 for (wt_slice, prev_acts_slice) in zip(wt_slices,

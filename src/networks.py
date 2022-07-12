@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # TODO: have params for size of network?
+# TODO: check if I can delete noop layers from CNNs.
 
 
 class CachingNet(nn.Module):
@@ -36,8 +37,8 @@ class CachingNet(nn.Module):
         if self.sequential_block is not None:
             seq_block = getattr(self, self.sequential_block)
             for name, module in seq_block.named_children():
-                if not name.startswith('0_'):
-                    self.layer_dict[name] = module
+                # if not name.startswith('0_'):
+                self.layer_dict[name] = module
 
         def hook(model, inp, out, name):
             self.activations[name] = out.detach()
@@ -306,6 +307,7 @@ class CIFAR10_BN_CNN_6(CachingNet):
             'layer4': self.layer4
         }
         self.cache_activations()
+        # noop layer is doing nothing here, right?
 
     def forward(self, x):
         x = self.layer1["conv"](x)
@@ -398,7 +400,6 @@ class CIFAR10_VGG(CachingNet):
     def __init__(self, conv_features, init_weights=True):
         super(CIFAR10_VGG, self).__init__()
         self.conv_features = conv_features
-        self.nooplayer = nn.ModuleDict({"noop": nn.Identity()})
         self.fc_ord_dict = OrderedDict([("0_dropout", nn.Dropout()),
                                         ("1_fc", nn.Linear(512, 512)),
                                         ("1_relu", nn.ReLU()),
@@ -410,7 +411,6 @@ class CIFAR10_VGG(CachingNet):
         if init_weights:
             self._initialize_weights()
         self.sequential_block = 'conv_features'
-        self.layer_dict = {'nooplayer': self.nooplayer}
         self.cache_activations()
 
     def forward(self, x):
@@ -448,10 +448,10 @@ def make_layers(cfg, batch_norm=False):
                                             padding=1)
             if batch_norm:
                 layers[f"{i}_bn"] = nn.BatchNorm2d(v)
-            if i == 0:
-                layers[f"{i}_noop"] = nn.Identity()
-                # add noop to record pre-relu inputs to first recorded
-                # activations
+            # if i == 0:
+            #     layers[f"{i}_noop"] = nn.Identity()
+            #     # add noop to record pre-relu inputs to first recorded
+            #     # activations
             layers[f"{i}_relu"] = nn.ReLU()
             if cfg[i + 1] != 'M':
                 dropout_rate = 0.3 if i != 0 else 0.4
